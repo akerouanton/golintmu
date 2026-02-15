@@ -63,6 +63,11 @@ func TestRWMutex(t *testing.T) {
 	analysistest.Run(t, testdata, singlePkgAnalyzer, "rwmutex")
 }
 
+func TestEmbedded(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, singlePkgAnalyzer, "embedded")
+}
+
 func TestCrossPackage(t *testing.T) {
 	testdata := analysistest.TestData()
 	analysistest.Run(t, testdata, analyzer.Analyzer, "crosspackage/pkga", "crosspackage/pkgb")

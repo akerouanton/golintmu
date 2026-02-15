@@ -138,11 +138,12 @@ func (ctx *passContext) processCall(fn *ssa.Function, call *ssa.Call, ls *lockSt
 	methodName := callee.Name()
 	if isLockMethod(methodName) {
 		recvVal := recv[0]
-		if !isMutexReceiver(recvVal) {
-			return
+		var ref *lockRef
+		if isMutexReceiver(recvVal) {
+			ref = resolveLockRef(recvVal)
+		} else {
+			ref = resolveEmbeddedMutexRef(recvVal, methodName)
 		}
-
-		ref := resolveLockRef(recvVal)
 		if ref != nil {
 			if isLockAcquire(methodName) {
 				ctx.checkAndRecordLockAcquire(fn, call.Pos(), ref, isExclusiveLock(methodName), ls)
@@ -224,16 +225,18 @@ func (ctx *passContext) checkDeferredUnlockMismatch(fn *ssa.Function, d *ssa.Def
 			return
 		}
 		recv = common.Args[0]
-		if !isMutexReceiver(recv) {
-			return
-		}
 	}
 
 	if !isLockMethod(methodName) || isLockAcquire(methodName) {
 		return
 	}
 
-	ref := resolveLockRef(recv)
+	var ref *lockRef
+	if isMutexReceiver(recv) {
+		ref = resolveLockRef(recv)
+	} else {
+		ref = resolveEmbeddedMutexRef(recv, methodName)
+	}
 	if ref == nil {
 		return
 	}

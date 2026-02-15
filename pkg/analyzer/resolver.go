@@ -98,6 +98,48 @@ func isMutexType(t types.Type) bool {
 	return obj.Name() == "Mutex" || obj.Name() == "RWMutex"
 }
 
+// isRWMutexType returns true if the type is sync.RWMutex specifically.
+func isRWMutexType(t types.Type) bool {
+	named, ok := t.(*types.Named)
+	if !ok {
+		return false
+	}
+	obj := named.Obj()
+	return obj != nil && obj.Pkg() != nil && obj.Pkg().Path() == "sync" && obj.Name() == "RWMutex"
+}
+
+// isRWLockMethod returns true if the method is RLock or RUnlock.
+func isRWLockMethod(name string) bool {
+	return name == "RLock" || name == "RUnlock"
+}
+
+// resolveEmbeddedMutexRef handles the wrapper-call case where the receiver is
+// a pointer to a struct that embeds sync.Mutex or sync.RWMutex. SSA can
+// generate (*S).Lock(s) calls where the receiver is *S, not *sync.Mutex.
+func resolveEmbeddedMutexRef(recv ssa.Value, methodName string) *lockRef {
+	recv = unwrapSSAValue(recv)
+	ptrType, ok := recv.Type().Underlying().(*types.Pointer)
+	if !ok {
+		return nil
+	}
+	structType, ok := ptrType.Elem().Underlying().(*types.Struct)
+	if !ok {
+		return nil
+	}
+	for i := 0; i < structType.NumFields(); i++ {
+		field := structType.Field(i)
+		if !field.Anonymous() || !isMutexType(field.Type()) {
+			continue
+		}
+		// RLock/RUnlock require sync.RWMutex specifically.
+		if isRWLockMethod(methodName) && !isRWMutexType(field.Type()) {
+			continue
+		}
+		return &lockRef{kind: fieldLock, base: recv, fieldIndex: i}
+	}
+	return nil
+}
+
 // isLockMethod returns true if the method name is a lock/unlock operation.
 func isLockMethod(name string) bool {
 	switch name {

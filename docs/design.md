@@ -514,13 +514,17 @@ Only dependency: `golang.org/x/tools` for:
 - Detect recursive RLock (deadlock risk with waiting writers)
 - Detect lock upgrade attempt (Lock after RLock — deadlock)
 
-### Iteration 10: Embedded mutexes
+### Iteration 10: Embedded mutexes ✅
 
-**Files:** Update `resolver.go`, `inference.go`, add `testdata/src/embedded/`
+**Status: Completed** — Handles embedded `sync.Mutex` and `sync.RWMutex` as anonymous struct fields with promoted Lock/Unlock methods.
+
+**Files:** Updated `resolver.go`, `ssawalk.go`, `golintmu_test.go`, added `testdata/src/embedded/`
 
 **Scope:**
-- Handle structs that embed `sync.Mutex` directly (promoted Lock/Unlock)
-- Resolve Lock/Unlock calls on the struct itself to the embedded mutex field
+- Handle structs that embed `sync.Mutex` or `sync.RWMutex` directly (promoted Lock/Unlock/RLock/RUnlock)
+- Resolve Lock/Unlock calls on the struct itself to the embedded mutex field via `resolveEmbeddedMutexRef` fallback
+- Works with both inline field extraction (already handled) and wrapper calls (`(*S).Lock(s)`)
+- Supports defer patterns, constructor exclusion, and mixed embedded + named mutex structs
 
 ### Future iterations (not scheduled):
 - Global mutex + global variable tracking
