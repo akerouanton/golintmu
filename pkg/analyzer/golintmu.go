@@ -63,6 +63,9 @@ type passContext struct {
 	// nil means "no entrypoints detected, treat all as concurrent".
 	// Non-nil maps functions reachable from concurrent entrypoints.
 	concurrentFuncs map[*ssa.Function]bool
+
+	// Annotation directives parsed from comments.
+	annotations *annotations
 }
 
 func run(pass *analysis.Pass) (any, error) {
@@ -80,6 +83,9 @@ func run(pass *analysis.Pass) (any, error) {
 		observedAt:   make(map[obsKey]bool),
 		funcFacts:    make(map[*ssa.Function]*funcLockFacts),
 	}
+
+	// Phase 0: Parse annotation directives from comments.
+	ctx.parseAnnotations()
 
 	// Phase 1: Collect observations and call sites by walking SSA.
 	ctx.collectObservations()

@@ -48,7 +48,7 @@ func (ctx *passContext) walkBlock(wctx *walkContext, block *ssa.BasicBlock, from
 		merged := prevEntry.intersect(ls)
 		// Report inconsistent lock state once per merge point (not on loop back-edges)
 		if !wctx.inconsistentLockReported[block] && fromBlock != nil && len(block.Preds) > 1 && !isBackEdge(fromBlock, block) {
-			ctx.reportInconsistentLockState(block, prevEntry, ls)
+			ctx.reportInconsistentLockState(wctx.fn, block, prevEntry, ls)
 			wctx.inconsistentLockReported[block] = true
 		}
 		if merged.equalHeld(prevEntry) {
@@ -161,7 +161,7 @@ func (ctx *passContext) processCall(fn *ssa.Function, call *ssa.Call, ls *lockSt
 func (ctx *passContext) checkAndRecordLockAcquire(fn *ssa.Function, pos token.Pos, ref *lockRef, ls *lockState) {
 	// Check for double-lock: is this lock already held?
 	if _, alreadyHeld := ls.held[*ref]; alreadyHeld {
-		ctx.reportDoubleLock(pos, ref)
+		ctx.reportDoubleLock(fn, pos, ref)
 	}
 
 	// Record the acquisition in funcFacts.

@@ -64,6 +64,9 @@ func (ctx *passContext) shouldSuppressDirectViolation(fn *ssa.Function, mfk mute
 
 // reportViolation emits a diagnostic for a field access without the required lock.
 func (ctx *passContext) reportViolation(obs observation, key fieldKey, guard guardInfo) {
+	if ctx.isSuppressed(obs.Func, obs.Pos) {
+		return
+	}
 	structName := key.StructType.Obj().Name()
 	st, ok := key.StructType.Underlying().(*types.Struct)
 	if !ok {
@@ -82,7 +85,10 @@ func (ctx *passContext) reportViolation(obs observation, key fieldKey, guard gua
 }
 
 // reportDoubleLock emits a diagnostic for acquiring a lock that is already held.
-func (ctx *passContext) reportDoubleLock(pos token.Pos, ref *lockRef) {
+func (ctx *passContext) reportDoubleLock(fn *ssa.Function, pos token.Pos, ref *lockRef) {
+	if ctx.isSuppressed(fn, pos) {
+		return
+	}
 	name := lockRefName(*ref)
 	if name == "" {
 		return
@@ -130,6 +136,9 @@ func (ctx *passContext) checkInterproceduralViolations() {
 // reportMissingLockAtCallSite emits a diagnostic for a call where the callee
 // requires a lock that the caller doesn't hold.
 func (ctx *passContext) reportMissingLockAtCallSite(cs callSiteRecord, mfk mutexFieldKey) {
+	if ctx.isSuppressed(cs.Caller, cs.Pos) {
+		return
+	}
 	name := mutexFieldKeyName(mfk)
 	if name == "" {
 		return
@@ -140,6 +149,9 @@ func (ctx *passContext) reportMissingLockAtCallSite(cs callSiteRecord, mfk mutex
 // reportDoubleLockAtCallSite emits a diagnostic for a call where the caller
 // holds a lock that the callee also acquires.
 func (ctx *passContext) reportDoubleLockAtCallSite(cs callSiteRecord, mfk mutexFieldKey) {
+	if ctx.isSuppressed(cs.Caller, cs.Pos) {
+		return
+	}
 	name := mutexFieldKeyName(mfk)
 	if name == "" {
 		return
@@ -160,11 +172,15 @@ func mutexFieldKeyName(mfk mutexFieldKey) string {
 // reportInconsistentLockState emits a diagnostic for inconsistent lock state
 // at a merge point. It diffs the two incoming states and reports each lock held
 // on one branch but not the other.
-func (ctx *passContext) reportInconsistentLockState(block *ssa.BasicBlock, stateA, stateB *lockState) {
+func (ctx *passContext) reportInconsistentLockState(fn *ssa.Function, block *ssa.BasicBlock, stateA, stateB *lockState) {
 	onlyA, onlyB := stateA.diff(stateB)
 
 	pos := blockPos(block)
 	if !pos.IsValid() {
+		return
+	}
+
+	if ctx.isSuppressed(fn, pos) {
 		return
 	}
 

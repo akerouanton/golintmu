@@ -41,3 +41,8 @@ func TestConcurrent(t *testing.T) {
 	testdata := analysistest.TestData()
 	analysistest.Run(t, testdata, analyzer.Analyzer, "concurrent")
 }
+
+func TestAnnotations(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, analyzer.Analyzer, "annotations")
+}

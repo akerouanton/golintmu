@@ -79,6 +79,13 @@ func (ctx *passContext) detectConcurrentEntrypoints() map[*ssa.Function]bool {
 		}
 	}
 
+	// Merge in functions annotated with //mu:concurrent.
+	if ctx.annotations != nil {
+		for fn := range ctx.annotations.concurrent {
+			entrypoints[fn] = true
+		}
+	}
+
 	return entrypoints
 }
 

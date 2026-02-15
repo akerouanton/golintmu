@@ -468,13 +468,18 @@ Only dependency: `golang.org/x/tools` for:
 - Compute reachability from concurrent entrypoints via BFS through call graph
 - Only report Phase 4 violations in concurrent contexts (fallback: all concurrent if no entrypoints detected)
 
-### Iteration 6: Annotations
+### Iteration 6: Annotations ✅
 
-**Files:** `annotations.go`, update `golintmu.go`, add `testdata/src/annotations/`
+**Status: Completed**
+
+**Files:** `annotations.go`, update `golintmu.go`, `concurrency.go`, `reporter.go`, `ssawalk.go`, add `testdata/src/annotations/`
 
 **Scope:**
-- Parse `//mu:concurrent`, `//mu:ignore`, `//mu:nolint`
-- Apply suppression in reporter
+- Parse `//mu:concurrent`, `//mu:ignore`, `//mu:nolint` comment directives
+- `//mu:concurrent` marks functions as concurrent entrypoints (merged into detection)
+- `//mu:ignore` suppresses all diagnostics in a function
+- `//mu:nolint` suppresses the diagnostic on the next line only
+- Suppression checks added to all five report functions
 
 ### Iteration 7: Cross-package facts
 
