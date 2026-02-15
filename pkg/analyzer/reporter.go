@@ -96,6 +96,49 @@ func (ctx *passContext) reportDoubleLock(fn *ssa.Function, pos token.Pos, ref *l
 	ctx.pass.Reportf(pos, "%s is already held when locking %s", name, name)
 }
 
+// checkExportedGuardedFields warns about exported fields that are guarded by
+// a lock. External packages can bypass the lock by accessing the field directly.
+func (ctx *passContext) checkExportedGuardedFields() {
+	for key, guard := range ctx.guards {
+		// Only check types defined in this package.
+		if key.StructType.Obj().Pkg() != ctx.pass.Pkg {
+			continue
+		}
+
+		st, ok := key.StructType.Underlying().(*types.Struct)
+		if !ok {
+			continue
+		}
+		if key.FieldIndex >= st.NumFields() {
+			continue
+		}
+
+		field := st.Field(key.FieldIndex)
+		if !field.Exported() {
+			continue
+		}
+
+		ctx.reportExportedGuardedField(key, guard, field)
+	}
+}
+
+// reportExportedGuardedField emits a C14 diagnostic for an exported guarded field.
+func (ctx *passContext) reportExportedGuardedField(key fieldKey, guard guardInfo, field *types.Var) {
+	st, ok := key.StructType.Underlying().(*types.Struct)
+	if !ok || guard.MutexFieldIndex >= st.NumFields() {
+		return
+	}
+
+	structName := key.StructType.Obj().Name()
+	fieldName := field.Name()
+	mutexName := st.Field(guard.MutexFieldIndex).Name()
+
+	msg := fmt.Sprintf("field %s.%s is guarded by %s.%s but is exported \u2014 external packages can bypass the lock",
+		structName, fieldName, structName, mutexName)
+
+	ctx.pass.Reportf(field.Pos(), "%s", msg)
+}
+
 // checkInterproceduralViolations iterates call sites and reports:
 // - Missing lock at call site (callee requires lock, caller doesn't hold it)
 // - Double-lock at call site (caller holds lock, callee acquires it transitively)

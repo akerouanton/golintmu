@@ -10,10 +10,11 @@ import (
 )
 
 var Analyzer = &analysis.Analyzer{
-	Name:     "golintmu",
-	Doc:      "detects inconsistent mutex locking of struct fields",
-	Run:      run,
-	Requires: []*analysis.Analyzer{buildssa.Analyzer},
+	Name:      "golintmu",
+	Doc:       "detects inconsistent mutex locking of struct fields",
+	Run:       run,
+	Requires:  []*analysis.Analyzer{buildssa.Analyzer},
+	FactTypes: []analysis.Fact{(*FieldGuardFact)(nil), (*FuncLockFact)(nil), (*ConcurrentFact)(nil)},
 }
 
 // fieldKey uniquely identifies a struct field across the package.
@@ -90,7 +91,10 @@ func run(pass *analysis.Pass) (any, error) {
 	// Phase 1: Collect observations and call sites by walking SSA.
 	ctx.collectObservations()
 
-	// Phase 2: Infer guards from observations.
+	// Phase 1.5: Import upstream facts for imported types and functions.
+	ctx.importFacts()
+
+	// Phase 2: Infer guards from observations (skip imported types).
 	ctx.inferGuards()
 
 	// Phase 2.5: Derive per-function lock requirements from observations + guards.
@@ -105,6 +109,12 @@ func run(pass *analysis.Pass) (any, error) {
 	// Phase 4: Check violations (direct + interprocedural).
 	ctx.checkViolations()
 	ctx.checkInterproceduralViolations()
+
+	// Phase 4.5: Check exported guarded fields (C14, local types only).
+	ctx.checkExportedGuardedFields()
+
+	// Phase 5: Export facts for downstream packages.
+	ctx.exportFacts()
 
 	return nil, nil
 }

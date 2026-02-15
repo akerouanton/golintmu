@@ -10,6 +10,11 @@ import (
 // inferGuards runs guard inference for all candidate struct fields.
 func (ctx *passContext) inferGuards() {
 	for key, observations := range ctx.observations {
+		// Skip imported types — their guards came from facts.
+		if key.StructType.Obj().Pkg() != ctx.pass.Pkg {
+			continue
+		}
+
 		// Filter out constructor observations.
 		var filtered []observation
 		for _, obs := range observations {

@@ -61,7 +61,7 @@ golintmu's core design (SSA-based lock state tracking + interprocedural propagat
 | [C11](catalog/C11-inconsistent-branch-locking.md) | Inconsistent branch locking | Error | Iteration 3 | No | Lock held in one branch but not the other at merge point | **Done** |
 | [C12](catalog/C12-cross-goroutine-unlock.md) | Cross-goroutine unlock | Warning | Future | Yes | Lock/unlock in different goroutines — fragile pattern | |
 | [C13](catalog/C13-return-while-locked.md) | Return while holding lock | Warning | Future | Yes | Function returns with lock held, caller unaware | |
-| [C14](catalog/C14-exported-guarded-field.md) | Exported guarded field | Warning | Iteration 7 | Cross-pkg | Guarded field is exported — external callers can bypass lock | |
+| [C14](catalog/C14-exported-guarded-field.md) | Exported guarded field | Warning | Iteration 7 | Cross-pkg | Guarded field is exported — external callers can bypass lock | **Done** |
 
 > **Implementation scope:** Early iterations focus on **C1** and **C2**. The core design naturally supports C4, C5, C7, C8, C11, and C13 — they all fall out of checking `lockState` at the right program points. C3 adds a lock-order graph. C6 extends `lockState` to track lock level. C9, C10, and C12 are specialized analyses built on the same infrastructure.
 
@@ -481,14 +481,17 @@ Only dependency: `golang.org/x/tools` for:
 - `//mu:nolint` suppresses the diagnostic on the next line only
 - Suppression checks added to all five report functions
 
-### Iteration 7: Cross-package facts
+### Iteration 7: Cross-package facts ✅
 
-**Files:** `facts.go`, update `golintmu.go`, `inference.go`, `interprocedural.go`, add `testdata/src/crosspackage/`
+**Status: Completed** — detects C14 (exported guarded field)
+
+**Files:** `facts.go` (new), update `golintmu.go`, `inference.go`, `reporter.go`, add `testdata/src/crosspackage/`
 
 **Scope:**
-- Export `FieldGuardFact`, `FuncLockFact`, `ConcurrentFact`
-- Import facts when analyzing downstream packages
+- Export `FieldGuardFact`, `FuncLockFact`, `ConcurrentFact` via `analysis.Fact` system
+- Import facts when analyzing downstream packages (field guards, function requirements, concurrent markers)
 - Warn when guarded field is exported (C14)
+- Cross-package violation detection: field access and call-site checks using imported facts
 
 ### Iteration 8: Multi-mutex structs
 
