@@ -49,7 +49,7 @@ golintmu's core design (SSA-based lock state tracking + interprocedural propagat
 | ID | Name | Severity | Phase | Interprocedural | Details | Status |
 |----|------|----------|-------|-----------------|---------|--------|
 | [C1](catalog/C01-inconsistent-field-locking.md) | Inconsistent field locking | Error | Iteration 1 | Yes | Field accessed under lock in some paths, without in others | **Done** |
-| [C2](catalog/C02-double-locking.md) | Double locking | Error | Iteration 4 | Yes | Mutex locked when already held — immediate deadlock | |
+| [C2](catalog/C02-double-locking.md) | Double locking | Error | Iteration 4 | Yes | Mutex locked when already held — immediate deadlock | **Done** |
 | [C3](catalog/C03-lock-ordering.md) | Lock ordering violations | Error | Future | Yes | Inconsistent acquisition order across code paths — potential deadlock | |
 | [C4](catalog/C04-unlock-of-unlocked.md) | Unlock of unlocked mutex | Error | Future | No | `Unlock()` when mutex isn't held — runtime panic | |
 | [C5](catalog/C05-lock-leak.md) | Lock leak / missing unlock | Error | Future | No | Function returns without unlocking on some code path | |
@@ -438,16 +438,22 @@ Only dependency: `golang.org/x/tools` for:
 - Handle loops with visited-block cache (block → lockState mapping, skip if compatible)
 - Detect C11 (inconsistent lock state across branches)
 
-### Iteration 4: Interprocedural analysis
+### Iteration 4: Interprocedural analysis ✅
 
-**Files:** `interprocedural.go`, update `golintmu.go`, `reporter.go`, add `testdata/src/interprocedural/`
+**Status: Completed** — Detects C2 (double locking), interprocedural lock requirement propagation.
+
+**Files:** `interprocedural.go`, update `golintmu.go`, `ssawalk.go`, `reporter.go`, add `testdata/src/interprocedural/`, `testdata/src/double_lock/`
 
 **Scope:**
-- Build intra-package call graph from SSA
-- Bottom-up lock requirement inference (Phase 3)
-- Top-down violation detection through call chains (Phase 4)
-- Call chain diagnostic output (3 frames max, elided)
-- Double-lock detection (C2) — lock acquired when already held (may come from caller)
+- Record call sites during SSA walk with normalized lock state
+- Record lock acquisitions per function
+- Bottom-up lock requirement inference (Phase 2.5: derive from observations + guards)
+- Fixed-point propagation of requirements through intra-package call graph (Phase 3)
+- Transitive acquisition propagation for double-lock detection
+- Interprocedural violation detection at call sites (Phase 4)
+- Suppression of direct violations when requirements propagate to call sites
+- Intra-function double-lock detection (C2)
+- Interprocedural double-lock detection (caller holds lock, callee acquires transitively)
 
 ### Iteration 5: Concurrent entrypoint detection
 

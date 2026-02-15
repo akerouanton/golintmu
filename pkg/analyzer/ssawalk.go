@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"go/token"
 	"go/types"
 
 	"golang.org/x/tools/go/ssa"
@@ -100,7 +101,8 @@ func (ctx *passContext) processInstruction(fn *ssa.Function, instr ssa.Instructi
 	}
 }
 
-// processCall handles Lock/Unlock calls and updates lock state.
+// processCall handles Lock/Unlock calls, updates lock state, records call sites,
+// and detects intra-function double-locks.
 func (ctx *passContext) processCall(fn *ssa.Function, call *ssa.Call, ls *lockState) {
 	common := call.Common()
 	if common.IsInvoke() {
@@ -113,7 +115,7 @@ func (ctx *passContext) processCall(fn *ssa.Function, call *ssa.Call, ls *lockSt
 			ref := resolveLockRef(recv)
 			if ref != nil {
 				if isLockAcquire(methodName) {
-					ls.lock(*ref, true)
+					ctx.checkAndRecordLockAcquire(fn, call.Pos(), ref, ls)
 				} else {
 					ls.unlock(*ref)
 				}
@@ -133,23 +135,69 @@ func (ctx *passContext) processCall(fn *ssa.Function, call *ssa.Call, ls *lockSt
 	}
 
 	methodName := callee.Name()
-	if !isLockMethod(methodName) {
-		return
-	}
-
-	recvVal := recv[0]
-	if !isMutexReceiver(recvVal) {
-		return
-	}
-
-	ref := resolveLockRef(recvVal)
-	if ref != nil {
-		if isLockAcquire(methodName) {
-			ls.lock(*ref, true)
-		} else {
-			ls.unlock(*ref)
+	if isLockMethod(methodName) {
+		recvVal := recv[0]
+		if !isMutexReceiver(recvVal) {
+			return
 		}
+
+		ref := resolveLockRef(recvVal)
+		if ref != nil {
+			if isLockAcquire(methodName) {
+				ctx.checkAndRecordLockAcquire(fn, call.Pos(), ref, ls)
+			} else {
+				ls.unlock(*ref)
+			}
+		}
+		return
 	}
+
+	// Non-lock static call: record call site for interprocedural analysis.
+	ctx.recordCallSite(fn, callee, call.Pos(), ls)
+}
+
+// checkAndRecordLockAcquire checks for intra-function double-lock, records the
+// lock acquisition in funcFacts, then acquires the lock.
+func (ctx *passContext) checkAndRecordLockAcquire(fn *ssa.Function, pos token.Pos, ref *lockRef, ls *lockState) {
+	// Check for double-lock: is this lock already held?
+	if _, alreadyHeld := ls.held[*ref]; alreadyHeld {
+		ctx.reportDoubleLock(pos, ref)
+	}
+
+	// Record the acquisition in funcFacts.
+	ctx.recordLockAcquisition(fn, ref)
+
+	// Actually acquire the lock.
+	ls.lock(*ref, true)
+}
+
+// recordCallSite records a static call with the normalized lock state at the call point.
+func (ctx *passContext) recordCallSite(caller, callee *ssa.Function, pos token.Pos, ls *lockState) {
+	cs := callSiteRecord{
+		Caller:           caller,
+		Callee:           callee,
+		Pos:              pos,
+		HeldByStructType: normalizeLockState(ls),
+	}
+	ctx.callSites = append(ctx.callSites, cs)
+}
+
+// recordLockAcquisition records that a function directly acquires a lock.
+func (ctx *passContext) recordLockAcquisition(fn *ssa.Function, ref *lockRef) {
+	if ref.kind != fieldLock {
+		return
+	}
+	ptrType, ok := ref.base.Type().Underlying().(*types.Pointer)
+	if !ok {
+		return
+	}
+	named, ok := ptrType.Elem().(*types.Named)
+	if !ok {
+		return
+	}
+	mfk := mutexFieldKey{StructType: named, FieldIndex: ref.fieldIndex}
+	facts := ctx.getOrCreateFuncFacts(fn)
+	facts.Acquires[mfk] = true
 }
 
 // isMutexReceiver returns true if the value is a pointer to sync.Mutex or sync.RWMutex.

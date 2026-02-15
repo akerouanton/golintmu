@@ -54,6 +54,10 @@ type passContext struct {
 	observations map[fieldKey][]observation
 	guards       map[fieldKey]guardInfo
 	observedAt   map[obsKey]bool // deduplication set for observations
+
+	// Interprocedural analysis state.
+	callSites []callSiteRecord
+	funcFacts map[*ssa.Function]*funcLockFacts
 }
 
 func run(pass *analysis.Pass) (any, error) {
@@ -69,18 +73,24 @@ func run(pass *analysis.Pass) (any, error) {
 		observations: make(map[fieldKey][]observation),
 		guards:       make(map[fieldKey]guardInfo),
 		observedAt:   make(map[obsKey]bool),
+		funcFacts:    make(map[*ssa.Function]*funcLockFacts),
 	}
 
-	// Phase 1: Collect observations by walking SSA.
+	// Phase 1: Collect observations and call sites by walking SSA.
 	ctx.collectObservations()
 
 	// Phase 2: Infer guards from observations.
 	ctx.inferGuards()
 
-	// Phase 3 (MVP skip): No interprocedural analysis yet.
+	// Phase 2.5: Derive per-function lock requirements from observations + guards.
+	ctx.deriveInitialRequirements()
 
-	// Phase 4: Check violations.
+	// Phase 3: Propagate requirements and acquisitions through call graph.
+	ctx.propagateRequirements()
+
+	// Phase 4: Check violations (direct + interprocedural).
 	ctx.checkViolations()
+	ctx.checkInterproceduralViolations()
 
 	return nil, nil
 }

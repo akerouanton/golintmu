@@ -26,3 +26,13 @@ func TestBranchPatterns(t *testing.T) {
 	testdata := analysistest.TestData()
 	analysistest.Run(t, testdata, analyzer.Analyzer, "branch_patterns")
 }
+
+func TestInterprocedural(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, analyzer.Analyzer, "interprocedural")
+}
+
+func TestDoubleLock(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, analyzer.Analyzer, "double_lock")
+}
