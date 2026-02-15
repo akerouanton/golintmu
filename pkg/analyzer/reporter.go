@@ -21,11 +21,21 @@ func (ctx *passContext) checkViolations() {
 
 			// Check if the guard mutex is held on the same struct instance.
 			held := false
-			for _, mutexFieldIdx := range obs.SameBaseMutexFields {
-				if mutexFieldIdx == guard.MutexFieldIndex {
+			heldExclusive := false
+			for _, hmf := range obs.SameBaseMutexFields {
+				if hmf.FieldIndex == guard.MutexFieldIndex {
 					held = true
+					heldExclusive = hmf.Exclusive
 					break
 				}
+			}
+
+			// Write under RLock: the guard is held but only as shared — data race.
+			if held && !obs.IsRead && !heldExclusive {
+				if ctx.isConcurrent(obs.Func) {
+					ctx.reportWriteUnderSharedLock(obs, key, guard)
+				}
+				continue
 			}
 
 			if !held {
@@ -84,6 +94,30 @@ func (ctx *passContext) reportViolation(obs observation, key fieldKey, guard gua
 	ctx.pass.Reportf(obs.Pos, "%s", msg)
 }
 
+// reportWriteUnderSharedLock emits a diagnostic for writing a field while only
+// holding a read lock (RLock) — this is a data race since RLock doesn't provide
+// mutual exclusion for writes.
+func (ctx *passContext) reportWriteUnderSharedLock(obs observation, key fieldKey, guard guardInfo) {
+	if ctx.isSuppressed(obs.Func, obs.Pos) {
+		return
+	}
+	structName := key.StructType.Obj().Name()
+	st, ok := key.StructType.Underlying().(*types.Struct)
+	if !ok {
+		return
+	}
+	if key.FieldIndex >= st.NumFields() || guard.MutexFieldIndex >= st.NumFields() {
+		return
+	}
+	fieldName := st.Field(key.FieldIndex).Name()
+	mutexName := st.Field(guard.MutexFieldIndex).Name()
+
+	msg := fmt.Sprintf("field %s.%s is written while %s.%s is read-locked \u2014 use Lock() for write access",
+		structName, fieldName, structName, mutexName)
+
+	ctx.pass.Reportf(obs.Pos, "%s", msg)
+}
+
 // reportDoubleLock emits a diagnostic for acquiring a lock that is already held.
 func (ctx *passContext) reportDoubleLock(fn *ssa.Function, pos token.Pos, ref *lockRef) {
 	if ctx.isSuppressed(fn, pos) {
@@ -94,6 +128,47 @@ func (ctx *passContext) reportDoubleLock(fn *ssa.Function, pos token.Pos, ref *l
 		return
 	}
 	ctx.pass.Reportf(pos, "%s is already held when locking %s", name, name)
+}
+
+// reportRecursiveRLock emits a diagnostic for recursive RLock — can deadlock
+// if a writer is waiting.
+func (ctx *passContext) reportRecursiveRLock(fn *ssa.Function, pos token.Pos, ref *lockRef) {
+	if ctx.isSuppressed(fn, pos) {
+		return
+	}
+	name := lockRefName(*ref)
+	if name == "" {
+		return
+	}
+	ctx.pass.Reportf(pos, "recursive RLock on %s \u2014 can deadlock if a writer is waiting", name)
+}
+
+// reportLockUpgradeAttempt emits a diagnostic for Lock() while RLock is held — deadlock.
+func (ctx *passContext) reportLockUpgradeAttempt(fn *ssa.Function, pos token.Pos, ref *lockRef) {
+	if ctx.isSuppressed(fn, pos) {
+		return
+	}
+	name := lockRefName(*ref)
+	if name == "" {
+		return
+	}
+	ctx.pass.Reportf(pos, "%s.Lock() called while %s is read-locked \u2014 lock upgrade can deadlock", name, name)
+}
+
+// reportMismatchedUnlock emits a diagnostic for calling the wrong unlock method.
+func (ctx *passContext) reportMismatchedUnlock(fn *ssa.Function, pos token.Pos, ref *lockRef, wasExclusive bool, unlockMethod string) {
+	if ctx.isSuppressed(fn, pos) {
+		return
+	}
+	name := lockRefName(*ref)
+	if name == "" {
+		return
+	}
+	if wasExclusive {
+		ctx.pass.Reportf(pos, "%s is exclusively locked but %s() was called \u2014 use Unlock()", name, unlockMethod)
+	} else {
+		ctx.pass.Reportf(pos, "%s is read-locked but %s() was called \u2014 use RUnlock()", name, unlockMethod)
+	}
 }
 
 // checkExportedGuardedFields warns about exported fields that are guarded by

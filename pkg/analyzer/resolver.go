@@ -112,6 +112,16 @@ func isLockAcquire(name string) bool {
 	return name == "Lock" || name == "RLock"
 }
 
+// isExclusiveLock returns true if the method acquires an exclusive lock.
+func isExclusiveLock(name string) bool {
+	return name == "Lock"
+}
+
+// isExclusiveUnlock returns true if the method releases an exclusive lock.
+func isExclusiveUnlock(name string) bool {
+	return name == "Unlock"
+}
+
 // resolveFieldAccess extracts the struct type and field index from a FieldAddr
 // instruction. Returns the base SSA value, field index, named struct type, and
 // whether the extraction succeeded.

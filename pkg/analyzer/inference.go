@@ -94,17 +94,19 @@ func isImmutableField(filteredObs []observation) bool {
 }
 
 // inferFieldGuard examines observations and infers which mutex guards the field.
+// It also computes NeedsExclusive: true when any observation is a write under
+// the inferred guard.
 func inferFieldGuard(key fieldKey, observations []observation) (guardInfo, bool) {
 	// Count how often each mutex field index appears as held.
 	counts := make(map[int]int)
 
 	for _, obs := range observations {
-		for _, mutexFieldIdx := range obs.SameBaseMutexFields {
+		for _, hmf := range obs.SameBaseMutexFields {
 			// Self-exclusion: a mutex field is never guarded by itself.
-			if mutexFieldIdx == key.FieldIndex {
+			if hmf.FieldIndex == key.FieldIndex {
 				continue
 			}
-			counts[mutexFieldIdx]++
+			counts[hmf.FieldIndex]++
 		}
 	}
 
@@ -123,5 +125,22 @@ func inferFieldGuard(key fieldKey, observations []observation) (guardInfo, bool)
 		}
 	}
 
-	return guardInfo{MutexFieldIndex: best}, true
+	// Compute NeedsExclusive: true when any observation is a write under the guard.
+	needsExclusive := false
+	for _, obs := range observations {
+		if obs.IsRead {
+			continue
+		}
+		for _, hmf := range obs.SameBaseMutexFields {
+			if hmf.FieldIndex == best {
+				needsExclusive = true
+				break
+			}
+		}
+		if needsExclusive {
+			break
+		}
+	}
+
+	return guardInfo{MutexFieldIndex: best, NeedsExclusive: needsExclusive}, true
 }

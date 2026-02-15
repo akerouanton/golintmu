@@ -53,7 +53,7 @@ golintmu's core design (SSA-based lock state tracking + interprocedural propagat
 | [C3](catalog/C03-lock-ordering.md) | Lock ordering violations | Error | Future | Yes | Inconsistent acquisition order across code paths — potential deadlock | |
 | [C4](catalog/C04-unlock-of-unlocked.md) | Unlock of unlocked mutex | Error | Future | No | `Unlock()` when mutex isn't held — runtime panic | |
 | [C5](catalog/C05-lock-leak.md) | Lock leak / missing unlock | Error | Future | No | Function returns without unlocking on some code path | |
-| [C6](catalog/C06-rwmutex-misuse.md) | RWMutex misuse | Error | Future | Yes | Mismatched unlock, recursive RLock, unnecessary exclusive lock | |
+| [C6](catalog/C06-rwmutex-misuse.md) | RWMutex misuse | Error | Iter 9 | Yes | Mismatched unlock, recursive RLock, lock upgrade attempt | ✅ |
 | [C7](catalog/C07-deferred-lock.md) | Deferred Lock instead of Unlock | Error | Future | No | `defer mu.Lock()` typo — deadlock at function exit | |
 | [C8](catalog/C08-lock-across-goroutine.md) | Lock held across goroutine spawn | Warning | Future | No | Goroutine spawned while lock is held | |
 | [C9](catalog/C09-lock-across-blocking.md) | Lock held across blocking ops | Warning | Future | No | Channel/sleep/I/O while lock is held | |
@@ -501,14 +501,18 @@ Only dependency: `golang.org/x/tools` for:
 - When a struct has multiple mutexes, infer per-field which specific mutex guards each field
 - Use co-occurrence: field F is guarded by the mutex most frequently held when F is accessed
 
-### Iteration 9: RWMutex distinction
+### Iteration 9: RWMutex distinction ✅
 
-**Files:** Update `lockstate.go`, `inference.go`, `reporter.go`, add `testdata/src/rwmutex/`
+**Status: Completed** — Detects C6 (mismatched unlock, recursive RLock, lock upgrade attempt). Infers `NeedsExclusive` per guard.
+
+**Files:** Updated `golintmu.go`, `lockstate.go`, `resolver.go`, `ssawalk.go`, `inference.go`, `reporter.go`, `interprocedural.go`, `facts.go`, added `testdata/src/rwmutex/`
 
 **Scope:**
 - Track exclusive (Lock) vs. read (RLock) lock level in `lockState`
-- Infer whether a field only needs RLock for reads
-- Detect mismatched unlock (Unlock after RLock, etc.)
+- Infer whether a field only needs RLock for reads (`NeedsExclusive`)
+- Detect mismatched unlock (Unlock after RLock, RUnlock after Lock — including deferred)
+- Detect recursive RLock (deadlock risk with waiting writers)
+- Detect lock upgrade attempt (Lock after RLock — deadlock)
 
 ### Iteration 10: Embedded mutexes
 

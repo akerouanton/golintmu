@@ -13,13 +13,20 @@ type mutexFieldKey struct {
 	FieldIndex int
 }
 
+// heldMutexRef is the normalized cross-function representation of a held mutex,
+// storing the field index and lock mode (exclusive vs shared).
+type heldMutexRef struct {
+	FieldIndex int
+	Exclusive  bool
+}
+
 // callSiteRecord records a static call from one function to another,
 // along with the normalized lock state at the call site.
 type callSiteRecord struct {
 	Caller           *ssa.Function
 	Callee           *ssa.Function
 	Pos              token.Pos
-	HeldByStructType map[*types.Named][]int // normalized lock state: struct type → held mutex field indices
+	HeldByStructType map[*types.Named][]heldMutexRef // normalized lock state: struct type → held mutex refs
 }
 
 // funcLockFacts tracks lock requirements and acquisitions for a function.
@@ -44,9 +51,9 @@ func (ctx *passContext) getOrCreateFuncFacts(fn *ssa.Function) *funcLockFacts {
 }
 
 // normalizeLockState converts a function-local lockState to a type-scoped
-// representation: map from struct type to held mutex field indices.
-func normalizeLockState(ls *lockState) map[*types.Named][]int {
-	result := make(map[*types.Named][]int)
+// representation: map from struct type to held mutex refs (field index + mode).
+func normalizeLockState(ls *lockState) map[*types.Named][]heldMutexRef {
+	result := make(map[*types.Named][]heldMutexRef)
 	for _, hl := range ls.held {
 		if hl.ref.kind != fieldLock {
 			continue
@@ -60,7 +67,10 @@ func normalizeLockState(ls *lockState) map[*types.Named][]int {
 		if !ok {
 			continue
 		}
-		result[named] = append(result[named], hl.ref.fieldIndex)
+		result[named] = append(result[named], heldMutexRef{
+			FieldIndex: hl.ref.fieldIndex,
+			Exclusive:  hl.exclusive,
+		})
 	}
 	return result
 }
@@ -77,8 +87,8 @@ func (ctx *passContext) deriveInitialRequirements() {
 			}
 
 			held := false
-			for _, mutexFieldIdx := range obs.SameBaseMutexFields {
-				if mutexFieldIdx == guard.MutexFieldIndex {
+			for _, hmf := range obs.SameBaseMutexFields {
+				if hmf.FieldIndex == guard.MutexFieldIndex {
 					held = true
 					break
 				}
@@ -162,14 +172,14 @@ func (ctx *passContext) propagateRequirements() {
 }
 
 // callerHoldsMutex returns true if the call site record indicates the caller
-// holds the specified mutex at the call point.
+// holds the specified mutex at the call point (mode-agnostic — any lock satisfies).
 func callerHoldsMutex(cs callSiteRecord, mfk mutexFieldKey) bool {
-	heldFields, ok := cs.HeldByStructType[mfk.StructType]
+	heldRefs, ok := cs.HeldByStructType[mfk.StructType]
 	if !ok {
 		return false
 	}
-	for _, fi := range heldFields {
-		if fi == mfk.FieldIndex {
+	for _, hr := range heldRefs {
+		if hr.FieldIndex == mfk.FieldIndex {
 			return true
 		}
 	}

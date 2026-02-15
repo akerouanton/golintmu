@@ -91,9 +91,10 @@ func (ctx *passContext) processInstruction(fn *ssa.Function, instr ssa.Instructi
 		//     field accesses within the body are correctly seen as locked.
 		//   - defer mu.Lock(): lock not acquired during function body, so
 		//     field accesses are correctly seen as unlocked.
-		// This simplified model is sufficient for guard inference. Future
-		// checks (lock leak detection, defer mu.Lock() typo) will require
-		// handling RunDefers instructions at function exit points.
+		// This simplified model is sufficient for guard inference.
+		// However, we DO check for mismatched unlock mode (e.g. defer mu.Unlock()
+		// after mu.RLock()) without modifying lock state.
+		ctx.checkDeferredUnlockMismatch(fn, inst, ls)
 	case *ssa.Store:
 		ctx.processStore(fn, inst, ls)
 	case *ssa.UnOp:
@@ -115,9 +116,9 @@ func (ctx *passContext) processCall(fn *ssa.Function, call *ssa.Call, ls *lockSt
 			ref := resolveLockRef(recv)
 			if ref != nil {
 				if isLockAcquire(methodName) {
-					ctx.checkAndRecordLockAcquire(fn, call.Pos(), ref, ls)
+					ctx.checkAndRecordLockAcquire(fn, call.Pos(), ref, isExclusiveLock(methodName), ls)
 				} else {
-					ls.unlock(*ref)
+					ctx.checkAndRecordUnlock(fn, call.Pos(), ref, isExclusiveUnlock(methodName), ls)
 				}
 			}
 		}
@@ -144,9 +145,9 @@ func (ctx *passContext) processCall(fn *ssa.Function, call *ssa.Call, ls *lockSt
 		ref := resolveLockRef(recvVal)
 		if ref != nil {
 			if isLockAcquire(methodName) {
-				ctx.checkAndRecordLockAcquire(fn, call.Pos(), ref, ls)
+				ctx.checkAndRecordLockAcquire(fn, call.Pos(), ref, isExclusiveLock(methodName), ls)
 			} else {
-				ls.unlock(*ref)
+				ctx.checkAndRecordUnlock(fn, call.Pos(), ref, isExclusiveUnlock(methodName), ls)
 			}
 		}
 		return
@@ -156,19 +157,98 @@ func (ctx *passContext) processCall(fn *ssa.Function, call *ssa.Call, ls *lockSt
 	ctx.recordCallSite(fn, callee, call.Pos(), ls)
 }
 
-// checkAndRecordLockAcquire checks for intra-function double-lock, records the
-// lock acquisition in funcFacts, then acquires the lock.
-func (ctx *passContext) checkAndRecordLockAcquire(fn *ssa.Function, pos token.Pos, ref *lockRef, ls *lockState) {
+// checkAndRecordLockAcquire checks for intra-function double-lock (including
+// recursive RLock and lock upgrade), records the lock acquisition in funcFacts,
+// then acquires the lock.
+func (ctx *passContext) checkAndRecordLockAcquire(fn *ssa.Function, pos token.Pos, ref *lockRef, exclusive bool, ls *lockState) {
 	// Check for double-lock: is this lock already held?
-	if _, alreadyHeld := ls.held[*ref]; alreadyHeld {
-		ctx.reportDoubleLock(fn, pos, ref)
+	if existing, alreadyHeld := ls.held[*ref]; alreadyHeld {
+		if exclusive && existing.exclusive {
+			// Lock-after-Lock: existing double-lock diagnostic.
+			ctx.reportDoubleLock(fn, pos, ref)
+		} else if !exclusive && !existing.exclusive {
+			// RLock-after-RLock: recursive RLock — deadlock risk.
+			ctx.reportRecursiveRLock(fn, pos, ref)
+		} else if exclusive && !existing.exclusive {
+			// Lock-after-RLock: lock upgrade attempt — deadlock.
+			ctx.reportLockUpgradeAttempt(fn, pos, ref)
+		} else {
+			// RLock-after-Lock: already exclusively held.
+			ctx.reportDoubleLock(fn, pos, ref)
+		}
 	}
 
 	// Record the acquisition in funcFacts.
 	ctx.recordLockAcquisition(fn, ref)
 
 	// Actually acquire the lock.
-	ls.lock(*ref, true)
+	ls.lock(*ref, exclusive)
+}
+
+// checkAndRecordUnlock checks for mismatched unlock (e.g. Unlock after RLock)
+// and then releases the lock.
+func (ctx *passContext) checkAndRecordUnlock(fn *ssa.Function, pos token.Pos, ref *lockRef, exclusiveUnlock bool, ls *lockState) {
+	if existing, held := ls.held[*ref]; held {
+		if existing.exclusive && !exclusiveUnlock {
+			// Lock held exclusively, but RUnlock() called.
+			ctx.reportMismatchedUnlock(fn, pos, ref, true, "RUnlock")
+		} else if !existing.exclusive && exclusiveUnlock {
+			// Lock held as shared (RLock), but Unlock() called.
+			ctx.reportMismatchedUnlock(fn, pos, ref, false, "Unlock")
+		}
+	}
+	ls.unlock(*ref)
+}
+
+// checkDeferredUnlockMismatch checks a deferred call for mismatched unlock mode
+// without modifying lock state (preserving existing defer semantics).
+func (ctx *passContext) checkDeferredUnlockMismatch(fn *ssa.Function, d *ssa.Defer, ls *lockState) {
+	common := d.Common()
+
+	var methodName string
+	var recv ssa.Value
+
+	if common.IsInvoke() {
+		if common.Method == nil {
+			return
+		}
+		methodName = common.Method.Name()
+		recv = common.Value
+	} else {
+		callee := common.StaticCallee()
+		if callee == nil {
+			return
+		}
+		methodName = callee.Name()
+		if len(common.Args) == 0 {
+			return
+		}
+		recv = common.Args[0]
+		if !isMutexReceiver(recv) {
+			return
+		}
+	}
+
+	if !isLockMethod(methodName) || isLockAcquire(methodName) {
+		return
+	}
+
+	ref := resolveLockRef(recv)
+	if ref == nil {
+		return
+	}
+
+	existing, held := ls.held[*ref]
+	if !held {
+		return
+	}
+
+	exclusiveUnlock := isExclusiveUnlock(methodName)
+	if existing.exclusive && !exclusiveUnlock {
+		ctx.reportMismatchedUnlock(fn, d.Pos(), ref, true, "RUnlock")
+	} else if !existing.exclusive && exclusiveUnlock {
+		ctx.reportMismatchedUnlock(fn, d.Pos(), ref, false, "Unlock")
+	}
 }
 
 // recordCallSite records a static call with the normalized lock state at the call point.
@@ -268,14 +348,17 @@ func (ctx *passContext) processRead(fn *ssa.Function, unop *ssa.UnOp, ls *lockSt
 	ctx.observations[key] = append(ctx.observations[key], obs)
 }
 
-// sameBaseMutexFields returns the field indices of held mutex locks whose base
-// SSA value matches the given base. This identifies which mutexes on the same
-// struct instance are held at this program point.
-func sameBaseMutexFields(base ssa.Value, ls *lockState) []int {
-	var fields []int
+// sameBaseMutexFields returns the held mutex fields whose base SSA value
+// matches the given base. This identifies which mutexes on the same struct
+// instance are held at this program point, including their lock mode.
+func sameBaseMutexFields(base ssa.Value, ls *lockState) []heldMutexField {
+	var fields []heldMutexField
 	for _, hl := range ls.held {
 		if hl.ref.base == base {
-			fields = append(fields, hl.ref.fieldIndex)
+			fields = append(fields, heldMutexField{
+				FieldIndex: hl.ref.fieldIndex,
+				Exclusive:  hl.exclusive,
+			})
 		}
 	}
 	return fields

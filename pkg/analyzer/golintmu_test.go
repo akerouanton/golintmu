@@ -58,6 +58,11 @@ func TestAnnotations(t *testing.T) {
 	analysistest.Run(t, testdata, singlePkgAnalyzer, "annotations")
 }
 
+func TestRWMutex(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, singlePkgAnalyzer, "rwmutex")
+}
+
 func TestCrossPackage(t *testing.T) {
 	testdata := analysistest.TestData()
 	analysistest.Run(t, testdata, analyzer.Analyzer, "crosspackage/pkga", "crosspackage/pkgb")

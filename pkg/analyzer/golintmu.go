@@ -23,12 +23,19 @@ type fieldKey struct {
 	FieldIndex int
 }
 
+// heldMutexField records a mutex field held at a program point, including
+// whether it was held exclusively (Lock) or shared (RLock).
+type heldMutexField struct {
+	FieldIndex int
+	Exclusive  bool
+}
+
 // observation records a single field access with its lock state context.
-// SameBaseMutexFields lists mutex field indices that were held on the same
+// SameBaseMutexFields lists mutex fields that were held on the same
 // struct instance at the time of this access (e.g. if s.mu is held when
-// accessing s.count, SameBaseMutexFields contains mu's field index).
+// accessing s.count, SameBaseMutexFields contains mu's field index and mode).
 type observation struct {
-	SameBaseMutexFields []int
+	SameBaseMutexFields []heldMutexField
 	IsRead              bool
 	Func                *ssa.Function
 	Pos                 token.Pos
@@ -37,6 +44,7 @@ type observation struct {
 // guardInfo records the inferred guard for a field.
 type guardInfo struct {
 	MutexFieldIndex int
+	NeedsExclusive  bool // true when any observation is a write under the guard
 }
 
 // obsKey uniquely identifies an observation by field, source position, and

@@ -21,10 +21,11 @@ type lockRef struct {
 	fieldIndex int       // field index within the struct
 }
 
-// heldLock is a lockRef with an exclusive flag. For MVP, exclusive is always true.
+// heldLock is a lockRef with an exclusive flag.
+// exclusive is true for Lock(), false for RLock().
 type heldLock struct {
 	ref       lockRef
-	exclusive bool // always true for MVP (no RLock distinction)
+	exclusive bool
 }
 
 // lockState tracks which locks are currently held at a given program point.
@@ -92,11 +93,15 @@ func (ls *lockState) diff(other *lockState) (onlyInSelf, onlyInOther []lockRef) 
 
 // intersect returns a new state with only locks held in both states.
 // Used at merge points for conservative continued analysis.
+// When both states hold the same lock but with different modes (exclusive vs shared),
+// the lock is dropped from the result to avoid false diagnostics.
 func (ls *lockState) intersect(other *lockState) *lockState {
 	result := newLockState()
 	for k, v := range ls.held {
-		if _, ok := other.held[k]; ok {
-			result.held[k] = v
+		if otherHeld, ok := other.held[k]; ok {
+			if v.exclusive == otherHeld.exclusive {
+				result.held[k] = v
+			}
 		}
 	}
 	return result

@@ -12,7 +12,8 @@ import (
 // FieldGuardFact is exported as an analysis.Fact attached to *types.TypeName.
 // It records which fields of a struct are guarded by which mutex fields.
 type FieldGuardFact struct {
-	Guards map[int]int // fieldIndex → mutexFieldIndex
+	Guards         map[int]int  // fieldIndex → mutexFieldIndex
+	NeedsExclusive map[int]bool // fieldIndex → true if guard needs exclusive lock (writes observed)
 }
 
 func (*FieldGuardFact) AFact() {}
@@ -173,7 +174,11 @@ func (ctx *passContext) importFieldGuardFacts() {
 				StructType: key.StructType,
 				FieldIndex: fieldIndex,
 			}
-			ctx.guards[fk] = guardInfo{MutexFieldIndex: mutexFieldIndex}
+			needsExcl := false
+			if fact.NeedsExclusive != nil {
+				needsExcl = fact.NeedsExclusive[fieldIndex]
+			}
+			ctx.guards[fk] = guardInfo{MutexFieldIndex: mutexFieldIndex, NeedsExclusive: needsExcl}
 		}
 	}
 }
@@ -258,7 +263,11 @@ func (ctx *passContext) exportFacts() {
 // exportFieldGuardFacts groups guards by struct type and exports FieldGuardFact
 // for exported types.
 func (ctx *passContext) exportFieldGuardFacts() {
-	byType := make(map[*types.Named]map[int]int)
+	type typeGuards struct {
+		guards         map[int]int
+		needsExclusive map[int]bool
+	}
+	byType := make(map[*types.Named]*typeGuards)
 	for key, guard := range ctx.guards {
 		if key.StructType.Obj().Pkg() != ctx.pass.Pkg {
 			continue
@@ -266,14 +275,25 @@ func (ctx *passContext) exportFieldGuardFacts() {
 		if !key.StructType.Obj().Exported() {
 			continue
 		}
-		if byType[key.StructType] == nil {
-			byType[key.StructType] = make(map[int]int)
+		tg := byType[key.StructType]
+		if tg == nil {
+			tg = &typeGuards{
+				guards:         make(map[int]int),
+				needsExclusive: make(map[int]bool),
+			}
+			byType[key.StructType] = tg
 		}
-		byType[key.StructType][key.FieldIndex] = guard.MutexFieldIndex
+		tg.guards[key.FieldIndex] = guard.MutexFieldIndex
+		if guard.NeedsExclusive {
+			tg.needsExclusive[key.FieldIndex] = true
+		}
 	}
 
-	for named, guards := range byType {
-		ctx.pass.ExportObjectFact(named.Obj(), &FieldGuardFact{Guards: guards})
+	for named, tg := range byType {
+		ctx.pass.ExportObjectFact(named.Obj(), &FieldGuardFact{
+			Guards:         tg.guards,
+			NeedsExclusive: tg.needsExclusive,
+		})
 	}
 }
 
