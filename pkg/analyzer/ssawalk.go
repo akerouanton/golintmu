@@ -45,6 +45,17 @@ func (ctx *passContext) processInstruction(fn *ssa.Function, instr ssa.Instructi
 	switch inst := instr.(type) {
 	case *ssa.Call:
 		ctx.processCall(fn, inst, ls)
+	case *ssa.Defer:
+		// Deferred calls execute at function return (RunDefers), not here.
+		// For golintmu's goal (detect inconsistent field access locking),
+		// we intentionally do NOT modify lockState at defer sites:
+		//   - defer mu.Unlock(): lock stays held through function body, so
+		//     field accesses within the body are correctly seen as locked.
+		//   - defer mu.Lock(): lock not acquired during function body, so
+		//     field accesses are correctly seen as unlocked.
+		// This simplified model is sufficient for guard inference. Future
+		// checks (lock leak detection C5, defer mu.Lock() typo C7) will
+		// require handling RunDefers instructions at function exit points.
 	case *ssa.Store:
 		ctx.processStore(fn, inst, ls)
 	case *ssa.UnOp:

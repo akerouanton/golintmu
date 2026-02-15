@@ -38,7 +38,8 @@ func (ctx *passContext) inferGuards() {
 // isConstructorLike returns true if the function looks like a constructor for
 // the given struct type.
 func isConstructorLike(fn *ssa.Function, structType *types.Named) bool {
-	if fn.Name() == "init" {
+	// SSA renames user-written init() functions to init#1, init#2, etc.
+	if fn.Name() == "init" || strings.HasPrefix(fn.Name(), "init#") {
 		return true
 	}
 

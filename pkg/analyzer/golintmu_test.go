@@ -11,3 +11,13 @@ func TestBasic(t *testing.T) {
 	testdata := analysistest.TestData()
 	analysistest.Run(t, testdata, analyzer.Analyzer, "basic")
 }
+
+func TestDeferPatterns(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, analyzer.Analyzer, "defer_patterns")
+}
+
+func TestFalsePositives(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, analyzer.Analyzer, "false_positives")
+}
