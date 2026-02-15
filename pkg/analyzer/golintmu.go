@@ -38,6 +38,14 @@ type guardInfo struct {
 	MutexFieldIndex int
 }
 
+// obsKey uniquely identifies an observation by field, source position, and
+// access type, used to deduplicate observations when blocks are re-walked.
+type obsKey struct {
+	field  fieldKey
+	pos    token.Pos
+	isRead bool
+}
+
 // passContext holds state for a single analyzer pass.
 type passContext struct {
 	pass         *analysis.Pass
@@ -45,6 +53,7 @@ type passContext struct {
 	srcFuncs     []*ssa.Function
 	observations map[fieldKey][]observation
 	guards       map[fieldKey]guardInfo
+	observedAt   map[obsKey]bool // deduplication set for observations
 }
 
 func run(pass *analysis.Pass) (any, error) {
@@ -59,6 +68,7 @@ func run(pass *analysis.Pass) (any, error) {
 		srcFuncs:     ssaResult.SrcFuncs,
 		observations: make(map[fieldKey][]observation),
 		guards:       make(map[fieldKey]guardInfo),
+		observedAt:   make(map[obsKey]bool),
 	}
 
 	// Phase 1: Collect observations by walking SSA.

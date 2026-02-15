@@ -21,3 +21,8 @@ func TestFalsePositives(t *testing.T) {
 	testdata := analysistest.TestData()
 	analysistest.Run(t, testdata, analyzer.Analyzer, "false_positives")
 }
+
+func TestBranchPatterns(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, analyzer.Analyzer, "branch_patterns")
+}

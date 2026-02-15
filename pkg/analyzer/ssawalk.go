@@ -6,6 +6,14 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
+// walkContext holds per-function CFG walk state.
+type walkContext struct {
+	fn          *ssa.Function
+	entryStates map[*ssa.BasicBlock]*lockState // state at block entry
+	exitStates  map[*ssa.BasicBlock]*lockState // state at block exit
+	inconsistentLockReported map[*ssa.BasicBlock]bool       // blocks where inconsistent lock state was already reported
+}
+
 // collectObservations iterates over all source functions and walks their CFGs.
 func (ctx *passContext) collectObservations() {
 	for _, fn := range ctx.srcFuncs {
@@ -18,25 +26,54 @@ func (ctx *passContext) walkFunction(fn *ssa.Function) {
 	if len(fn.Blocks) == 0 {
 		return
 	}
+	wctx := &walkContext{
+		fn:          fn,
+		entryStates: make(map[*ssa.BasicBlock]*lockState),
+		exitStates:  make(map[*ssa.BasicBlock]*lockState),
+		inconsistentLockReported: make(map[*ssa.BasicBlock]bool),
+	}
 	ls := newLockState()
-	visited := make(map[*ssa.BasicBlock]bool)
-	ctx.walkBlock(fn, fn.Blocks[0], ls, visited)
+	ctx.walkBlock(wctx, fn.Blocks[0], nil, ls)
 }
 
 // walkBlock processes all instructions in a basic block and recurses into successors.
-func (ctx *passContext) walkBlock(fn *ssa.Function, block *ssa.BasicBlock, ls *lockState, visited map[*ssa.BasicBlock]bool) {
-	if visited[block] {
-		return
+// It uses entry-state comparison to handle loops and merge points correctly.
+func (ctx *passContext) walkBlock(wctx *walkContext, block *ssa.BasicBlock, fromBlock *ssa.BasicBlock, ls *lockState) {
+	if prevEntry, visited := wctx.entryStates[block]; visited {
+		if ls.equalHeld(prevEntry) {
+			return // loop with compatible state, no new info
+		}
+		// Different state on re-visit → compute intersection
+		merged := prevEntry.intersect(ls)
+		// Report inconsistent lock state once per merge point (not on loop back-edges)
+		if !wctx.inconsistentLockReported[block] && fromBlock != nil && len(block.Preds) > 1 && !isBackEdge(fromBlock, block) {
+			ctx.reportInconsistentLockState(block, prevEntry, ls)
+			wctx.inconsistentLockReported[block] = true
+		}
+		if merged.equalHeld(prevEntry) {
+			return // converged
+		}
+		wctx.entryStates[block] = merged
+		ls = merged
+	} else {
+		wctx.entryStates[block] = ls.fork()
 	}
-	visited[block] = true
 
 	for _, instr := range block.Instrs {
-		ctx.processInstruction(fn, instr, ls)
+		ctx.processInstruction(wctx.fn, instr, ls)
 	}
 
+	wctx.exitStates[block] = ls.fork()
+
 	for _, succ := range block.Succs {
-		ctx.walkBlock(fn, succ, ls.clone(), visited)
+		ctx.walkBlock(wctx, succ, block, ls.fork())
 	}
+}
+
+// isBackEdge returns true if the edge from→to is a back-edge in the CFG.
+// A back-edge goes from a block to one of its dominators (forming a loop).
+func isBackEdge(from, to *ssa.BasicBlock) bool {
+	return to.Dominates(from)
 }
 
 // processInstruction dispatches on instruction type to track locks and record
@@ -54,8 +91,8 @@ func (ctx *passContext) processInstruction(fn *ssa.Function, instr ssa.Instructi
 		//   - defer mu.Lock(): lock not acquired during function body, so
 		//     field accesses are correctly seen as unlocked.
 		// This simplified model is sufficient for guard inference. Future
-		// checks (lock leak detection C5, defer mu.Lock() typo C7) will
-		// require handling RunDefers instructions at function exit points.
+		// checks (lock leak detection, defer mu.Lock() typo) will require
+		// handling RunDefers instructions at function exit points.
 	case *ssa.Store:
 		ctx.processStore(fn, inst, ls)
 	case *ssa.UnOp:
@@ -140,6 +177,11 @@ func (ctx *passContext) processStore(fn *ssa.Function, store *ssa.Store, ls *loc
 	}
 
 	key := fieldKey{StructType: structType, FieldIndex: fieldIdx}
+	ok2 := obsKey{field: key, pos: store.Pos(), isRead: false}
+	if ctx.observedAt[ok2] {
+		return
+	}
+	ctx.observedAt[ok2] = true
 	obs := observation{
 		SameBaseMutexFields: sameBaseMutexFields(base, ls),
 		IsRead:              false,
@@ -164,6 +206,11 @@ func (ctx *passContext) processRead(fn *ssa.Function, unop *ssa.UnOp, ls *lockSt
 	}
 
 	key := fieldKey{StructType: structType, FieldIndex: fieldIdx}
+	ok2 := obsKey{field: key, pos: unop.Pos(), isRead: true}
+	if ctx.observedAt[ok2] {
+		return
+	}
+	ctx.observedAt[ok2] = true
 	obs := observation{
 		SameBaseMutexFields: sameBaseMutexFields(base, ls),
 		IsRead:              true,

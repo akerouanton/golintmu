@@ -32,6 +32,10 @@ The analyzer is a single `analysis.Analyzer` in `pkg/analyzer/` that runs in pha
 
 SSA values are function-scoped (each method's receiver is a different `*ssa.Parameter`), so raw `lockRef` values can't compare across functions. Observations normalize this by storing `SameBaseMutexFields []int`—just the mutex field indices held on the same struct base—rather than full `lockRef` values. Guard inference and violation checking operate purely on these field indices, which are type-scoped and work across all methods.
 
+## Naming Conventions
+
+Never use error catalog IDs (C01, C11, etc.) in code — not in variable names, function names, method names, or comments. The catalog is a documentation artifact, not a code concept. Use descriptive names that convey meaning: `reportInconsistentLockState` not `reportC11`, `inconsistentLockReported` not `c11Reported`.
+
 ## Design Reference
 
 - `docs/design.md` — Full design document (architecture, algorithm, iteration roadmap)

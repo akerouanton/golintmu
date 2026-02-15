@@ -1,6 +1,10 @@
 package analyzer
 
-import "golang.org/x/tools/go/ssa"
+import (
+	"sort"
+
+	"golang.org/x/tools/go/ssa"
+)
 
 // lockRefKind identifies the kind of lock origin.
 type lockRefKind int
@@ -42,11 +46,58 @@ func (ls *lockState) unlock(ref lockRef) {
 	delete(ls.held, ref)
 }
 
-// clone returns a shallow copy of the lock state (simple map copy, no COW).
-func (ls *lockState) clone() *lockState {
+// fork returns a shallow copy of the lock state for use at branch points.
+func (ls *lockState) fork() *lockState {
 	cp := &lockState{held: make(map[lockRef]heldLock, len(ls.held))}
 	for k, v := range ls.held {
 		cp.held[k] = v
 	}
 	return cp
+}
+
+// equalHeld returns true if both states hold exactly the same set of lockRef keys.
+func (ls *lockState) equalHeld(other *lockState) bool {
+	if len(ls.held) != len(other.held) {
+		return false
+	}
+	for k := range ls.held {
+		if _, ok := other.held[k]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// diff returns locks held in one state but not the other.
+// Results are sorted by fieldIndex for determinism.
+func (ls *lockState) diff(other *lockState) (onlyInSelf, onlyInOther []lockRef) {
+	for k := range ls.held {
+		if _, ok := other.held[k]; !ok {
+			onlyInSelf = append(onlyInSelf, k)
+		}
+	}
+	for k := range other.held {
+		if _, ok := ls.held[k]; !ok {
+			onlyInOther = append(onlyInOther, k)
+		}
+	}
+	sort.Slice(onlyInSelf, func(i, j int) bool {
+		return onlyInSelf[i].fieldIndex < onlyInSelf[j].fieldIndex
+	})
+	sort.Slice(onlyInOther, func(i, j int) bool {
+		return onlyInOther[i].fieldIndex < onlyInOther[j].fieldIndex
+	})
+	return
+}
+
+// intersect returns a new state with only locks held in both states.
+// Used at merge points for conservative continued analysis.
+func (ls *lockState) intersect(other *lockState) *lockState {
+	result := newLockState()
+	for k, v := range ls.held {
+		if _, ok := other.held[k]; ok {
+			result.held[k] = v
+		}
+	}
+	return result
 }
