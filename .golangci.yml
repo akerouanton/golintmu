@@ -1,0 +1,11 @@
+version: "2"
+
+linters:
+  enable:
+    - forcetypeassert
+    - unused
+    - revive
+  settings:
+    revive:
+      rules:
+        - name: use-any

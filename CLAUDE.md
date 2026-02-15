@@ -13,6 +13,7 @@ go test ./...                              # Run all tests
 go test ./pkg/analyzer/                    # Run analyzer tests only
 go test ./pkg/analyzer/ -run TestBasic     # Run a single test
 go build ./cmd/golintmu                    # Build the CLI binary
+golangci-lint run ./...                    # Run linters
 ```
 
 Tests use `analysistest.Run` with `// want "regexp"` comments in testdata files. To add a test case, add Go code to `pkg/analyzer/testdata/src/<suite>/` with `// want` comments on lines expected to produce diagnostics.
