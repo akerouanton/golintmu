@@ -38,7 +38,7 @@ Never use error catalog IDs (C01, C11, etc.) in code — not in variable names, 
 
 ## Design Reference
 
-- `docs/design.md` — Full design document (architecture, algorithm, iteration roadmap)
+- `docs/design.md` — Full design document (architecture, algorithm, iteration roadmap). Design iterations (scope, files, status) are defined in §9. Read the relevant iteration section during the Explore phase of planning to understand what each iteration is supposed to cover.
 - `docs/catalog/C01-*.md` through `C14-*.md` — Error catalog with examples
 
 After completing each iteration, update `docs/design.md` to mark it done: add a ✅ to the iteration heading, set its **Status: Completed**, note which error catalog IDs it now detects, and update the Status column in the §3 error catalog table.

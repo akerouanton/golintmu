@@ -29,6 +29,10 @@ func (ctx *passContext) checkViolations() {
 			}
 
 			if !held {
+				// Skip violations in non-concurrent contexts.
+				if !ctx.isConcurrent(obs.Func) {
+					continue
+				}
 				// Suppress direct violation if this function has a requirement
 				// for this lock and has callers — the violation will be reported
 				// at the call sites instead.
@@ -91,6 +95,11 @@ func (ctx *passContext) reportDoubleLock(pos token.Pos, ref *lockRef) {
 // - Double-lock at call site (caller holds lock, callee acquires it transitively)
 func (ctx *passContext) checkInterproceduralViolations() {
 	for _, cs := range ctx.callSites {
+		// Skip violations in non-concurrent contexts.
+		if !ctx.isConcurrent(cs.Caller) {
+			continue
+		}
+
 		calleeFacts, ok := ctx.funcFacts[cs.Callee]
 		if !ok {
 			continue

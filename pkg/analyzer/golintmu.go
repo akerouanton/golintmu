@@ -58,6 +58,11 @@ type passContext struct {
 	// Interprocedural analysis state.
 	callSites []callSiteRecord
 	funcFacts map[*ssa.Function]*funcLockFacts
+
+	// Concurrency analysis state.
+	// nil means "no entrypoints detected, treat all as concurrent".
+	// Non-nil maps functions reachable from concurrent entrypoints.
+	concurrentFuncs map[*ssa.Function]bool
 }
 
 func run(pass *analysis.Pass) (any, error) {
@@ -87,6 +92,9 @@ func run(pass *analysis.Pass) (any, error) {
 
 	// Phase 3: Propagate requirements and acquisitions through call graph.
 	ctx.propagateRequirements()
+
+	// Phase 3.5: Detect concurrent entrypoints and compute reachability.
+	ctx.computeConcurrentContext()
 
 	// Phase 4: Check violations (direct + interprocedural).
 	ctx.checkViolations()

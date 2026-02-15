@@ -36,3 +36,8 @@ func TestDoubleLock(t *testing.T) {
 	testdata := analysistest.TestData()
 	analysistest.Run(t, testdata, analyzer.Analyzer, "double_lock")
 }
+
+func TestConcurrent(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, analyzer.Analyzer, "concurrent")
+}

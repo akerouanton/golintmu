@@ -455,16 +455,18 @@ Only dependency: `golang.org/x/tools` for:
 - Intra-function double-lock detection (C2)
 - Interprocedural double-lock detection (caller holds lock, callee acquires transitively)
 
-### Iteration 5: Concurrent entrypoint detection
+### Iteration 5: Concurrent entrypoint detection ✅
 
-**Files:** `concurrency.go`, update `golintmu.go`, add `testdata/src/concurrent/`
+**Status: Completed** — Detects concurrent entrypoints (`go` targets, `ServeHTTP`, `http.HandleFunc`) and filters Phase 4 violations (C1, interprocedural missing-lock, interprocedural double-lock) to concurrent contexts only. Phase 1 diagnostics (C2 intra-function double-lock, C11 inconsistent branch locking) remain unfiltered.
+
+**Files:** `concurrency.go`, update `golintmu.go`, `reporter.go`, add `testdata/src/concurrent/`
 
 **Scope:**
 - Detect `go` statement targets (functions and closures)
 - Detect HTTP handler implementations (ServeHTTP, HandlerFunc)
 - Detect functions passed to `http.HandleFunc`, `http.Handle`
-- Compute reachability from concurrent entrypoints
-- Only report violations in concurrent contexts
+- Compute reachability from concurrent entrypoints via BFS through call graph
+- Only report Phase 4 violations in concurrent contexts (fallback: all concurrent if no entrypoints detected)
 
 ### Iteration 6: Annotations
 
