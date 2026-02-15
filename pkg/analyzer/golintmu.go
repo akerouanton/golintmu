@@ -47,8 +47,11 @@ type passContext struct {
 	guards       map[fieldKey]guardInfo
 }
 
-func run(pass *analysis.Pass) (interface{}, error) {
-	ssaResult := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA)
+func run(pass *analysis.Pass) (any, error) {
+	ssaResult, ok := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA)
+	if !ok {
+		return nil, nil
+	}
 
 	ctx := &passContext{
 		pass:         pass,

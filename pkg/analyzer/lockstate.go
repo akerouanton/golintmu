@@ -42,12 +42,6 @@ func (ls *lockState) unlock(ref lockRef) {
 	delete(ls.held, ref)
 }
 
-// isHeld returns true if the given lock is currently held.
-func (ls *lockState) isHeld(ref lockRef) bool {
-	_, ok := ls.held[ref]
-	return ok
-}
-
 // clone returns a shallow copy of the lock state (simple map copy, no COW).
 func (ls *lockState) clone() *lockState {
 	cp := &lockState{held: make(map[lockRef]heldLock, len(ls.held))}
@@ -55,13 +49,4 @@ func (ls *lockState) clone() *lockState {
 		cp.held[k] = v
 	}
 	return cp
-}
-
-// heldLocks returns a slice of all currently held locks.
-func (ls *lockState) heldLocks() []heldLock {
-	locks := make([]heldLock, 0, len(ls.held))
-	for _, v := range ls.held {
-		locks = append(locks, v)
-	}
-	return locks
 }

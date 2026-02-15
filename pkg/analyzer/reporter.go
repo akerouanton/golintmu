@@ -34,7 +34,13 @@ func (ctx *passContext) checkViolations() {
 // reportViolation emits a diagnostic for a field access without the required lock.
 func (ctx *passContext) reportViolation(obs observation, key fieldKey, guard guardInfo) {
 	structName := key.StructType.Obj().Name()
-	st := key.StructType.Underlying().(*types.Struct)
+	st, ok := key.StructType.Underlying().(*types.Struct)
+	if !ok {
+		return
+	}
+	if key.FieldIndex >= st.NumFields() || guard.MutexFieldIndex >= st.NumFields() {
+		return
+	}
 	fieldName := st.Field(key.FieldIndex).Name()
 	mutexName := st.Field(guard.MutexFieldIndex).Name()
 

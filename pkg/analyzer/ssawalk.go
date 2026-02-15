@@ -56,6 +56,9 @@ func (ctx *passContext) processInstruction(fn *ssa.Function, instr ssa.Instructi
 func (ctx *passContext) processCall(fn *ssa.Function, call *ssa.Call, ls *lockState) {
 	common := call.Common()
 	if common.IsInvoke() {
+		if common.Method == nil {
+			return
+		}
 		recv := common.Value
 		methodName := common.Method.Name()
 		if isLockMethod(methodName) {
@@ -117,7 +120,10 @@ func (ctx *passContext) processStore(fn *ssa.Function, store *ssa.Store, ls *loc
 	if !ok {
 		return
 	}
-	st := structType.Underlying().(*types.Struct)
+	st, stOk := structType.Underlying().(*types.Struct)
+	if !stOk || fieldIdx >= st.NumFields() {
+		return
+	}
 	if isMutexType(st.Field(fieldIdx).Type()) {
 		return
 	}
@@ -138,7 +144,10 @@ func (ctx *passContext) processRead(fn *ssa.Function, unop *ssa.UnOp, ls *lockSt
 	if !ok {
 		return
 	}
-	st := structType.Underlying().(*types.Struct)
+	st, stOk := structType.Underlying().(*types.Struct)
+	if !stOk || fieldIdx >= st.NumFields() {
+		return
+	}
 	if isMutexType(st.Field(fieldIdx).Type()) {
 		return
 	}

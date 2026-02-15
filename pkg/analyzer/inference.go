@@ -38,18 +38,31 @@ func (ctx *passContext) inferGuards() {
 // isConstructorLike returns true if the function looks like a constructor for
 // the given struct type.
 func isConstructorLike(fn *ssa.Function, structType *types.Named) bool {
+	if fn.Name() == "init" {
+		return true
+	}
+
+	if returnsStructType(fn, structType) {
+		return true
+	}
+
+	// Name-based heuristic: only match New/Make/Create prefixes when the
+	// struct name is part of the function name (e.g. NewConfig for Config).
+	structName := structType.Obj().Name()
 	name := fn.Name()
-
-	if strings.HasPrefix(name, "New") || strings.HasPrefix(name, "Make") || strings.HasPrefix(name, "Create") {
-		return true
+	for _, prefix := range []string{"New", "Make", "Create"} {
+		if strings.HasPrefix(name, prefix) && strings.Contains(name, structName) {
+			return true
+		}
 	}
 
-	if name == "init" {
-		return true
-	}
+	return false
+}
 
-	sig := fn.Signature
-	results := sig.Results()
+// returnsStructType returns true if fn's signature returns the given struct
+// type (or a pointer to it).
+func returnsStructType(fn *ssa.Function, structType *types.Named) bool {
+	results := fn.Signature.Results()
 	for i := 0; i < results.Len(); i++ {
 		rt := results.At(i).Type()
 		if types.Identical(rt, structType) {
@@ -61,7 +74,6 @@ func isConstructorLike(fn *ssa.Function, structType *types.Named) bool {
 			}
 		}
 	}
-
 	return false
 }
 
@@ -94,11 +106,12 @@ func inferFieldGuard(key fieldKey, observations []observation) (guardInfo, bool)
 		return guardInfo{}, false
 	}
 
-	// Pick the mutex held most often.
-	var best int
+	// Pick the mutex held most often. Break ties by lowest field index for
+	// deterministic results across runs.
+	best := -1
 	var bestCount int
 	for fieldIdx, count := range counts {
-		if count > bestCount {
+		if count > bestCount || (count == bestCount && (best == -1 || fieldIdx < best)) {
 			best = fieldIdx
 			bestCount = count
 		}

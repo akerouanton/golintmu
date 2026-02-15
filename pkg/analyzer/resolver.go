@@ -18,7 +18,17 @@ func resolveLockRef(v ssa.Value) *lockRef {
 		return nil
 	}
 	// Check that the field is a mutex type.
-	structType := fa.X.Type().Underlying().(*types.Pointer).Elem().Underlying().(*types.Struct)
+	ptr, ok := fa.X.Type().Underlying().(*types.Pointer)
+	if !ok {
+		return nil
+	}
+	structType, ok := ptr.Elem().Underlying().(*types.Struct)
+	if !ok {
+		return nil
+	}
+	if fa.Field >= structType.NumFields() {
+		return nil
+	}
 	field := structType.Field(fa.Field)
 	if !isMutexType(field.Type()) {
 		return nil
@@ -34,11 +44,16 @@ func resolveLockRef(v ssa.Value) *lockRef {
 // unwrapSSAValue strips Phi nodes (if all edges agree), UnOp (dereference),
 // and other pass-through SSA values to find the underlying value.
 func unwrapSSAValue(v ssa.Value) ssa.Value {
+	visited := make(map[*ssa.Phi]bool)
+	return unwrapSSAValueVisited(v, visited)
+}
+
+func unwrapSSAValueVisited(v ssa.Value, visited map[*ssa.Phi]bool) ssa.Value {
 	for {
 		switch val := v.(type) {
 		case *ssa.Phi:
 			// If all phi edges agree on the same value, unwrap.
-			if resolved := resolvePhiIfUniform(val); resolved != nil {
+			if resolved := resolvePhiIfUniform(val, visited); resolved != nil {
 				v = resolved
 				continue
 			}
@@ -50,11 +65,17 @@ func unwrapSSAValue(v ssa.Value) ssa.Value {
 }
 
 // resolvePhiIfUniform returns the single unique value if all phi edges agree,
-// or nil if they diverge.
-func resolvePhiIfUniform(phi *ssa.Phi) ssa.Value {
+// or nil if they diverge. The visited set prevents infinite recursion on phi
+// cycles (common in loops).
+func resolvePhiIfUniform(phi *ssa.Phi, visited map[*ssa.Phi]bool) ssa.Value {
+	if visited[phi] {
+		return nil
+	}
+	visited[phi] = true
+
 	var unique ssa.Value
 	for _, edge := range phi.Edges {
-		edge = unwrapSSAValue(edge)
+		edge = unwrapSSAValueVisited(edge, visited)
 		if unique == nil {
 			unique = edge
 		} else if unique != edge {
@@ -71,7 +92,7 @@ func isMutexType(t types.Type) bool {
 		return false
 	}
 	obj := named.Obj()
-	if obj.Pkg() == nil || obj.Pkg().Path() != "sync" {
+	if obj == nil || obj.Pkg() == nil || obj.Pkg().Path() != "sync" {
 		return false
 	}
 	return obj.Name() == "Mutex" || obj.Name() == "RWMutex"
