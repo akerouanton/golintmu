@@ -46,22 +46,22 @@ Together, these ensure that code which becomes concurrent is automatically detec
 
 golintmu's core design (SSA-based lock state tracking + interprocedural propagation) supports detecting the following classes of mutex bugs. Each check has a detailed page with examples in [`docs/catalog/`](catalog/).
 
-| ID | Name | Severity | Phase | Interprocedural | Details |
-|----|------|----------|-------|-----------------|---------|
-| [C1](catalog/C01-inconsistent-field-locking.md) | Inconsistent field locking | Error | MVP | Yes | Field accessed under lock in some paths, without in others |
-| [C2](catalog/C02-double-locking.md) | Double locking | Error | MVP | Yes | Mutex locked when already held — immediate deadlock |
-| [C3](catalog/C03-lock-ordering.md) | Lock ordering violations | Error | Future | Yes | Inconsistent acquisition order across code paths — potential deadlock |
-| [C4](catalog/C04-unlock-of-unlocked.md) | Unlock of unlocked mutex | Error | Future | No | `Unlock()` when mutex isn't held — runtime panic |
-| [C5](catalog/C05-lock-leak.md) | Lock leak / missing unlock | Error | Future | No | Function returns without unlocking on some code path |
-| [C6](catalog/C06-rwmutex-misuse.md) | RWMutex misuse | Error | Future | Yes | Mismatched unlock, recursive RLock, unnecessary exclusive lock |
-| [C7](catalog/C07-deferred-lock.md) | Deferred Lock instead of Unlock | Error | Future | No | `defer mu.Lock()` typo — deadlock at function exit |
-| [C8](catalog/C08-lock-across-goroutine.md) | Lock held across goroutine spawn | Warning | Future | No | Goroutine spawned while lock is held |
-| [C9](catalog/C09-lock-across-blocking.md) | Lock held across blocking ops | Warning | Future | No | Channel/sleep/I/O while lock is held |
-| [C10](catalog/C10-mutex-copying.md) | Mutex copying | Error | Future | No | Mutex copied by value — breaks synchronization |
-| [C11](catalog/C11-inconsistent-branch-locking.md) | Inconsistent branch locking | Error | Future | No | Lock held in one branch but not the other at merge point |
-| [C12](catalog/C12-cross-goroutine-unlock.md) | Cross-goroutine unlock | Warning | Future | Yes | Lock/unlock in different goroutines — fragile pattern |
-| [C13](catalog/C13-return-while-locked.md) | Return while holding lock | Warning | Future | Yes | Function returns with lock held, caller unaware |
-| [C14](catalog/C14-exported-guarded-field.md) | Exported guarded field | Warning | Iteration 7 | Cross-pkg | Guarded field is exported — external callers can bypass lock |
+| ID | Name | Severity | Phase | Interprocedural | Details | Status |
+|----|------|----------|-------|-----------------|---------|--------|
+| [C1](catalog/C01-inconsistent-field-locking.md) | Inconsistent field locking | Error | Iteration 1 | Yes | Field accessed under lock in some paths, without in others | **Done** |
+| [C2](catalog/C02-double-locking.md) | Double locking | Error | Iteration 4 | Yes | Mutex locked when already held — immediate deadlock | |
+| [C3](catalog/C03-lock-ordering.md) | Lock ordering violations | Error | Future | Yes | Inconsistent acquisition order across code paths — potential deadlock | |
+| [C4](catalog/C04-unlock-of-unlocked.md) | Unlock of unlocked mutex | Error | Future | No | `Unlock()` when mutex isn't held — runtime panic | |
+| [C5](catalog/C05-lock-leak.md) | Lock leak / missing unlock | Error | Future | No | Function returns without unlocking on some code path | |
+| [C6](catalog/C06-rwmutex-misuse.md) | RWMutex misuse | Error | Future | Yes | Mismatched unlock, recursive RLock, unnecessary exclusive lock | |
+| [C7](catalog/C07-deferred-lock.md) | Deferred Lock instead of Unlock | Error | Future | No | `defer mu.Lock()` typo — deadlock at function exit | |
+| [C8](catalog/C08-lock-across-goroutine.md) | Lock held across goroutine spawn | Warning | Future | No | Goroutine spawned while lock is held | |
+| [C9](catalog/C09-lock-across-blocking.md) | Lock held across blocking ops | Warning | Future | No | Channel/sleep/I/O while lock is held | |
+| [C10](catalog/C10-mutex-copying.md) | Mutex copying | Error | Future | No | Mutex copied by value — breaks synchronization | |
+| [C11](catalog/C11-inconsistent-branch-locking.md) | Inconsistent branch locking | Error | Iteration 3 | No | Lock held in one branch but not the other at merge point | **Done** |
+| [C12](catalog/C12-cross-goroutine-unlock.md) | Cross-goroutine unlock | Warning | Future | Yes | Lock/unlock in different goroutines — fragile pattern | |
+| [C13](catalog/C13-return-while-locked.md) | Return while holding lock | Warning | Future | Yes | Function returns with lock held, caller unaware | |
+| [C14](catalog/C14-exported-guarded-field.md) | Exported guarded field | Warning | Iteration 7 | Cross-pkg | Guarded field is exported — external callers can bypass lock | |
 
 > **Implementation scope:** Early iterations focus on **C1** and **C2**. The core design naturally supports C4, C5, C7, C8, C11, and C13 — they all fall out of checking `lockState` at the right program points. C3 adds a lock-order graph. C6 extends `lockState` to track lock level. C9, C10, and C12 are specialized analyses built on the same infrastructure.
 
@@ -396,7 +396,9 @@ Only dependency: `golang.org/x/tools` for:
 
 ## 9. Iterative Implementation Roadmap
 
-### Iteration 1: MVP core — Lock state tracking + inference + basic violations
+### Iteration 1: MVP core — Lock state tracking + inference + basic violations ✅
+
+**Status: Completed** — Detects C1 (inconsistent field locking).
 
 **Files:** `go.mod`, `golintmu.go`, `lockstate.go`, `resolver.go`, `ssawalk.go`, `inference.go`, `reporter.go`, `cmd/golintmu/main.go`, `golintmu_test.go`, `testdata/src/basic/`
 
@@ -413,7 +415,9 @@ Only dependency: `golang.org/x/tools` for:
 - No RWMutex distinction — treat RLock/RUnlock same as Lock/Unlock
 - Basic test cases with `// want` comments
 
-### Iteration 2: Defer handling + constructor heuristics
+### Iteration 2: Defer handling + constructor heuristics ✅
+
+**Status: Completed**
 
 **Files:** Update `ssawalk.go`, `inference.go`, add `testdata/src/defer_patterns/`, `testdata/src/false_positives/`
 
@@ -422,7 +426,9 @@ Only dependency: `golang.org/x/tools` for:
 - Improve constructor detection: `New*`, `Make*`, `Create*`, return-type analysis
 - Exclude `init()` from inference
 
-### Iteration 3: COW fork + proper branch handling
+### Iteration 3: COW fork + proper branch handling ✅
+
+**Status: Completed** — Detects C11 (inconsistent branch locking).
 
 **Files:** Update `lockstate.go`, `ssawalk.go`, add `testdata/src/` branch test cases
 

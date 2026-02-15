@@ -41,6 +41,8 @@ Never use error catalog IDs (C01, C11, etc.) in code — not in variable names, 
 - `docs/design.md` — Full design document (architecture, algorithm, iteration roadmap)
 - `docs/catalog/C01-*.md` through `C14-*.md` — Error catalog with examples
 
+After completing each iteration, update `docs/design.md` to mark it done: add a ✅ to the iteration heading, set its **Status: Completed**, note which error catalog IDs it now detects, and update the Status column in the §3 error catalog table.
+
 ## Code Review Workflow
 
 After implementing features or fixes, run the `code-reviewer` and `code-security` subagents to check for issues before considering the task complete.
