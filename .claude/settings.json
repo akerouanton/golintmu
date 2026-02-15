@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(gh api:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(find:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git diff-tree:*)",
+      "Bash(golangci-lint:*)"
+    ]
+  }
+}

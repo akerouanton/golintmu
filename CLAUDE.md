@@ -37,6 +37,10 @@ SSA values are function-scoped (each method's receiver is a different `*ssa.Para
 - `docs/design.md` — Full design document (architecture, algorithm, iteration roadmap)
 - `docs/catalog/C01-*.md` through `C14-*.md` — Error catalog with examples
 
+## Code Review Workflow
+
+After implementing features or fixes, run the `code-reviewer` and `code-security` subagents to check for issues before considering the task complete.
+
 ## Task Tracking
 
 Use `bd` for task tracking.
