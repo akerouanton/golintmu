@@ -108,6 +108,11 @@ func TestConstructorCalls(t *testing.T) {
 	analysistest.Run(t, testdata, singlePkgAnalyzer, "constructor_calls")
 }
 
+func TestNestedValueType(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, singlePkgAnalyzer, "nested_value_type")
+}
+
 func TestInterproceduralVerbose(t *testing.T) {
 	testdata := analysistest.TestData()
 	if err := analyzer.Analyzer.Flags.Set("verbose", "true"); err != nil {

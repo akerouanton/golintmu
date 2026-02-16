@@ -424,6 +424,11 @@ func (ctx *passContext) processStore(fn *ssa.Function, store *ssa.Store, ls *loc
 		Pos:                 store.Pos(),
 	}
 	ctx.observations[key] = append(ctx.observations[key], obs)
+
+	// Record ancestor observations for value-type nested fields.
+	if fa, isFA := store.Addr.(*ssa.FieldAddr); isFA {
+		ctx.recordAncestorObservations(fn, fa, false, store.Pos(), ls)
+	}
 }
 
 // processRead handles UnOp (dereference) instructions to record read observations.
@@ -453,6 +458,55 @@ func (ctx *passContext) processRead(fn *ssa.Function, unop *ssa.UnOp, ls *lockSt
 		Pos:                 unop.Pos(),
 	}
 	ctx.observations[key] = append(ctx.observations[key], obs)
+
+	// Record ancestor observations for value-type nested fields.
+	if fa, isFA := unop.X.(*ssa.FieldAddr); isFA {
+		ctx.recordAncestorObservations(fn, fa, true, unop.Pos(), ls)
+	}
+}
+
+// recordAncestorObservations walks up the FieldAddr chain to detect value-type
+// ancestor fields and records additional observations for each. This handles
+// the case where accessing c.state.Status (where state is a value type) should
+// also record an observation for Container.state, since no intermediate UnOp
+// is produced for value-type field chains.
+func (ctx *passContext) recordAncestorObservations(fn *ssa.Function, primaryFA *ssa.FieldAddr, isRead bool, pos token.Pos, ls *lockState) {
+	seen := make(map[ssa.Value]bool)
+	current := primaryFA.X
+	for !seen[current] {
+		seen[current] = true
+		unwrapped := unwrapSSAValue(current)
+		ancestorFA, isFA := unwrapped.(*ssa.FieldAddr)
+		if !isFA {
+			break
+		}
+
+		base, fieldIdx, structType, ok := resolveFieldAccess(unwrapped)
+		if !ok {
+			break
+		}
+		st, stOk := structType.Underlying().(*types.Struct)
+		if !stOk || fieldIdx >= st.NumFields() {
+			break
+		}
+		if isMutexType(st.Field(fieldIdx).Type()) {
+			break
+		}
+
+		key := fieldKey{StructType: structType, FieldIndex: fieldIdx}
+		ok2 := obsKey{field: key, pos: pos, isRead: isRead}
+		if !ctx.observedAt[ok2] {
+			ctx.observedAt[ok2] = true
+			ctx.observations[key] = append(ctx.observations[key], observation{
+				SameBaseMutexFields: sameBaseMutexFields(base, ls),
+				IsRead:              isRead,
+				Func:                fn,
+				Pos:                 pos,
+			})
+		}
+
+		current = ancestorFA.X
+	}
 }
 
 // sameBaseMutexFields returns the held mutex fields whose base SSA value
