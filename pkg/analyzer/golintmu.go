@@ -74,6 +74,13 @@ type lockLeakCandidate struct {
 	AcquirePos token.Pos // where the lock was acquired
 }
 
+// deferredLockTypoKey identifies a (function, lockRef) pair where a deferred
+// lock typo was detected, used to suppress C5 for the same pair.
+type deferredLockTypoKey struct {
+	fn  *ssa.Function
+	ref lockRef
+}
+
 // passContext holds state for a single analyzer pass.
 type passContext struct {
 	pass         *analysis.Pass
@@ -93,6 +100,9 @@ type passContext struct {
 	// Deferred C5 candidates (collected Phase 1, reported Phase 3.4).
 	// Keyed by return position to allow clearing stale candidates on block re-walks.
 	lockLeakCandidates map[token.Pos][]lockLeakCandidate
+
+	// Set of (fn, lockRef) pairs where C7 fired — used to suppress C5 for the same pair.
+	deferredLockTypoReported map[deferredLockTypoKey]bool
 
 	// Lock-order graph for C3 cycle detection.
 	lockOrderGraph *lockOrderGraph
@@ -121,7 +131,8 @@ func run(pass *analysis.Pass) (any, error) {
 		observedAt:   make(map[obsKey]bool),
 		funcFacts:          make(map[*ssa.Function]*funcLockFacts),
 		lockOrderGraph:     newLockOrderGraph(),
-		lockLeakCandidates: make(map[token.Pos][]lockLeakCandidate),
+		lockLeakCandidates:      make(map[token.Pos][]lockLeakCandidate),
+		deferredLockTypoReported: make(map[deferredLockTypoKey]bool),
 	}
 
 	// Phase 0: Parse annotation directives from comments.

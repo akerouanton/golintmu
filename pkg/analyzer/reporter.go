@@ -172,6 +172,22 @@ func (ctx *passContext) reportMismatchedUnlock(fn *ssa.Function, pos token.Pos, 
 	}
 }
 
+// reportDeferredLockInsteadOfUnlock emits a diagnostic for `defer mu.Lock()` typo.
+func (ctx *passContext) reportDeferredLockInsteadOfUnlock(fn *ssa.Function, pos token.Pos, ref *lockRef, methodName string) {
+	if ctx.isSuppressed(fn, pos) {
+		return
+	}
+	name := lockRefName(*ref)
+	if name == "" {
+		return
+	}
+	suggestion := "Unlock"
+	if methodName == "RLock" {
+		suggestion = "RUnlock"
+	}
+	ctx.pass.Reportf(pos, "defer %s.%s() will deadlock \u2014 did you mean defer %s.%s()?", name, methodName, name, suggestion)
+}
+
 // computeReturnsHolding derives per-function ReturnsHolding postconditions from
 // C5 lock-leak candidates. A function has ReturnsHolding(mfk) if ALL its return
 // points hold lock mfk (every return is a lock-leak candidate for that lock).
@@ -286,6 +302,10 @@ func (ctx *passContext) reportDeferredLockLeaks() {
 	for _, candidates := range ctx.lockLeakCandidates {
 		for _, c := range candidates {
 			if ctx.functionRequiresMutex(c.Fn, &c.Ref) {
+				continue
+			}
+			// Suppress C5 when C7 already reported the root cause (deferred lock typo).
+			if ctx.deferredLockTypoReported[deferredLockTypoKey{fn: c.Fn, ref: c.Ref}] {
 				continue
 			}
 			// Suppress C5 when C13 applies: the function is an acquire helper

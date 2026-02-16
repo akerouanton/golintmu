@@ -88,6 +88,11 @@ func TestReturnWhileLocked(t *testing.T) {
 	analysistest.Run(t, testdata, singlePkgAnalyzer, "return_while_locked")
 }
 
+func TestDeferredLock(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, singlePkgAnalyzer, "deferred_lock")
+}
+
 func TestCrossPackage(t *testing.T) {
 	testdata := analysistest.TestData()
 	analysistest.Run(t, testdata, analyzer.Analyzer, "crosspackage/pkga", "crosspackage/pkgb")

@@ -139,6 +139,6 @@ func (d *DeferLock) CorrectSet(v int) {
 }
 
 func (d *DeferLock) BrokenSet(v int) {
-	defer d.mu.Lock() // WRONG: acquires at return, not during body
+	defer d.mu.Lock() // want `defer DeferLock\.mu\.Lock\(\) will deadlock — did you mean defer DeferLock\.mu\.Unlock\(\)\?`
 	d.value = v       // want `field DeferLock\.value is accessed without holding DeferLock\.mu`
 }

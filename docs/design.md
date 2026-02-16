@@ -54,7 +54,7 @@ golintmu's core design (SSA-based lock state tracking + interprocedural propagat
 | [C4](catalog/C04-unlock-of-unlocked.md) | Unlock of unlocked mutex | Error | Iteration 11 | No | `Unlock()` when mutex isn't held — runtime panic | **Done** |
 | [C5](catalog/C05-lock-leak.md) | Lock leak / missing unlock | Error | Iteration 12 | No | Function returns without unlocking on some code path | **Done** |
 | [C6](catalog/C06-rwmutex-misuse.md) | RWMutex misuse | Error | Iter 9 | Yes | Mismatched unlock, recursive RLock, lock upgrade attempt | **Done** |
-| [C7](catalog/C07-deferred-lock.md) | Deferred Lock instead of Unlock | Error | Future | No | `defer mu.Lock()` typo — deadlock at function exit | |
+| [C7](catalog/C07-deferred-lock.md) | Deferred Lock instead of Unlock | Error | Iteration 14 | No | `defer mu.Lock()` typo — deadlock at function exit | **Done** |
 | [C8](catalog/C08-lock-across-goroutine.md) | Lock held across goroutine spawn | Warning | Future | No | Goroutine spawned while lock is held | |
 | [C9](catalog/C09-lock-across-blocking.md) | Lock held across blocking ops | Warning | Future | No | Channel/sleep/I/O while lock is held | |
 | [C10](catalog/C10-mutex-copying.md) | Mutex copying | Error | — | No | Mutex copied by value — breaks synchronization | Won't implement (`go vet` copylocks) |

@@ -95,6 +95,8 @@ func (ctx *passContext) processInstruction(fn *ssa.Function, instr ssa.Instructi
 		// However, we DO check for mismatched unlock mode (e.g. defer mu.Unlock()
 		// after mu.RLock()) without modifying lock state.
 		ctx.checkDeferredUnlockMismatch(fn, inst, ls)
+		// Detect defer mu.Lock() typo (should be defer mu.Unlock()).
+		ctx.checkDeferredLockInsteadOfUnlock(fn, inst)
 		// Record deferred unlock for C5 lock-leak detection.
 		ctx.recordDeferredUnlock(inst, ls)
 	case *ssa.Return:
@@ -294,6 +296,17 @@ func (ctx *passContext) checkDeferredUnlockMismatch(fn *ssa.Function, d *ssa.Def
 	} else if !existing.exclusive && exclusiveUnlock {
 		ctx.reportMismatchedUnlock(fn, d.Pos(), ref, false, "Unlock")
 	}
+}
+
+// checkDeferredLockInsteadOfUnlock detects the typo `defer mu.Lock()` instead of
+// `defer mu.Unlock()`. Fires when the deferred method is a lock acquire.
+func (ctx *passContext) checkDeferredLockInsteadOfUnlock(fn *ssa.Function, d *ssa.Defer) {
+	ref, methodName := resolveDeferredLockRef(d)
+	if ref == nil || !isLockAcquire(methodName) {
+		return
+	}
+	ctx.reportDeferredLockInsteadOfUnlock(fn, d.Pos(), ref, methodName)
+	ctx.deferredLockTypoReported[deferredLockTypoKey{fn: fn, ref: *ref}] = true
 }
 
 // recordDeferredUnlock records a deferred unlock in the lock state for C5 leak detection.
