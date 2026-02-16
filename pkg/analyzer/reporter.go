@@ -171,6 +171,100 @@ func (ctx *passContext) reportMismatchedUnlock(fn *ssa.Function, pos token.Pos, 
 	}
 }
 
+// reportDeferredUnlockOfUnlocked iterates C4 candidates collected during Phase 1
+// and reports those not suppressed by funcLockFacts.Requires.
+func (ctx *passContext) reportDeferredUnlockOfUnlocked() {
+	for _, c := range ctx.unlockOfUnlockedCandidates {
+		if ctx.functionRequiresMutex(c.Fn, &c.Ref) {
+			continue
+		}
+		ctx.reportUnlockOfUnlocked(c.Fn, c.Pos, &c.Ref)
+	}
+}
+
+// functionRequiresMutex returns true if fn's funcLockFacts.Requires contains
+// the mutex identified by ref. Used to suppress C4 for helper functions that
+// expect callers to hold the lock.
+func (ctx *passContext) functionRequiresMutex(fn *ssa.Function, ref *lockRef) bool {
+	mfk, ok := lockRefToMutexFieldKey(ref)
+	if !ok {
+		return false
+	}
+	facts, ok := ctx.funcFacts[fn]
+	if !ok {
+		return false
+	}
+	return facts.Requires[mfk]
+}
+
+// reportUnlockOfUnlocked emits a C4 diagnostic for Unlock() when the mutex is not held.
+func (ctx *passContext) reportUnlockOfUnlocked(fn *ssa.Function, pos token.Pos, ref *lockRef) {
+	if ctx.isSuppressed(fn, pos) {
+		return
+	}
+	name := lockRefName(*ref)
+	if name == "" {
+		return
+	}
+	ctx.pass.Reportf(pos, "Unlock() called but %s is not held", name)
+}
+
+// detectAndReportLockOrderCycles runs cycle detection on the lock-order graph
+// and reports violations filtered by concurrent context.
+func (ctx *passContext) detectAndReportLockOrderCycles() {
+	cycles := ctx.lockOrderGraph.detectCycles()
+	for _, cycle := range cycles {
+		// Filter: at least one edge must originate from a concurrent function.
+		hasConcurrent := false
+		for _, edge := range cycle {
+			if ctx.isConcurrent(edge.Fn) {
+				hasConcurrent = true
+				break
+			}
+		}
+		if !hasConcurrent {
+			continue
+		}
+		ctx.reportLockOrderCycle(cycle)
+	}
+}
+
+// reportLockOrderCycle emits a C3 diagnostic for a lock-ordering cycle.
+func (ctx *passContext) reportLockOrderCycle(cycle lockOrderCycle) {
+	if len(cycle) == 0 {
+		return
+	}
+
+	// Use the first edge's position for the diagnostic.
+	edge := cycle[0]
+	if ctx.isSuppressed(edge.Fn, edge.Pos) {
+		return
+	}
+
+	// Collect unique mutex names in the cycle.
+	seen := make(map[string]bool)
+	var names []string
+	for _, e := range cycle {
+		fromName := mutexFieldKeyName(e.From)
+		if fromName != "" && !seen[fromName] {
+			seen[fromName] = true
+			names = append(names, fromName)
+		}
+	}
+
+	if len(names) < 2 {
+		// Self-edge: same type, different instances.
+		if len(names) == 1 {
+			ctx.pass.Reportf(edge.Pos, "potential deadlock: lock ordering cycle on %s", names[0])
+			return
+		}
+		return
+	}
+
+	ctx.pass.Reportf(edge.Pos, "potential deadlock: lock ordering cycle between %s and %s",
+		names[0], names[1])
+}
+
 // checkExportedGuardedFields warns about exported fields that are guarded by
 // a lock. External packages can bypass the lock by accessing the field directly.
 func (ctx *passContext) checkExportedGuardedFields() {

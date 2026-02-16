@@ -136,11 +136,36 @@ Iteration-by-iteration implementation history. For the high-level architecture, 
 - Works with both inline field extraction (already handled) and wrapper calls (`(*S).Lock(s)`)
 - Supports defer patterns, constructor exclusion, and mixed embedded + named mutex structs
 
+## Iteration 11: C3 (lock ordering) and C4 (unlock of unlocked)
+
+**Status: Completed** — Detects C4 (unlock of unlocked mutex — runtime panic) and C3 (lock ordering violations — potential deadlock).
+
+**Files:** `lockorder.go` (new), updated `golintmu.go`, `ssawalk.go`, `interprocedural.go`, `reporter.go`, `double_lock/double_lock.go`, `golintmu_test.go`, added `testdata/src/unlock_of_unlocked/`, `testdata/src/lock_ordering/`
+
+**C4 scope:**
+- Extract `lockRefToMutexFieldKey` helper from `recordLockAcquisition` for reuse
+- Add `unlockOfUnlockedCandidate` type and collection field on `passContext`
+- Detect unlock-of-unlocked in `checkAndRecordUnlock` `else` branch (lock not in `ls.held`)
+- Defer reporting to Phase 3.3 (after requirement propagation) for suppression accuracy
+- Suppress C4 when function has `Requires` entry for the mutex (helper functions)
+- Deferred unlocks (`Lock() + defer Unlock()`) naturally don't trigger C4
+- Scenarios: unpaired unlock, double unlock, branch-conditional unlock
+
+**C3 scope:**
+- Lock-order graph data structure (`lockOrderGraph`) with directed edges between `mutexFieldKey` nodes
+- Intra-function edge collection: when a lock is acquired while others are held, record held→acquired edges
+- Skip same-instance self-edges (double-lock, already C2); allow same-type different-instance self-edges
+- Interprocedural edge collection: caller-held locks → callee's `AcquiresTransitive` (skip same-key to avoid C2 overlap)
+- DFS-based cycle detection with white/gray/black coloring
+- Deterministic traversal via sorted nodes and edges
+- Cycle deduplication (same cycle from different DFS start nodes)
+- Concurrent context filtering: at least one edge in the cycle must originate from a concurrent function
+- Phase 3.7 placement: after Phase 3 (requirement propagation) and Phase 3.5 (concurrent context), before Phase 4
+- Scenarios: two-lock inversion, same-type self-edge, consistent ordering (no diagnostic), interprocedural ordering
+
 ---
 
 ## Future iterations (not scheduled)
-
-See [`docs/design-c3-c4.md`](design-c3-c4.md) for C3 (lock ordering) and C4 (unlock of unlocked) designs.
 
 Remaining items:
 - Global mutex + global variable tracking

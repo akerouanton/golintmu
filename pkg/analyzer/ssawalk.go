@@ -179,6 +179,27 @@ func (ctx *passContext) checkAndRecordLockAcquire(fn *ssa.Function, pos token.Po
 		}
 	}
 
+	// Record lock-order edges: for each lock already held, add an edge held→acquired.
+	// Skip when held and acquired are the same lock instance (double-lock, already C2).
+	acquiredKey, acquiredOk := lockRefToMutexFieldKey(ref)
+	if acquiredOk {
+		for heldRef := range ls.held {
+			if heldRef == *ref {
+				continue // same instance — double-lock, not an ordering issue
+			}
+			heldKey, heldOk := lockRefToMutexFieldKey(&heldRef)
+			if !heldOk {
+				continue
+			}
+			ctx.lockOrderGraph.addEdge(lockOrderEdge{
+				From: heldKey,
+				To:   acquiredKey,
+				Pos:  pos,
+				Fn:   fn,
+			})
+		}
+	}
+
 	// Record the acquisition in funcFacts.
 	ctx.recordLockAcquisition(fn, ref)
 
@@ -197,6 +218,11 @@ func (ctx *passContext) checkAndRecordUnlock(fn *ssa.Function, pos token.Pos, re
 			// Lock held as shared (RLock), but Unlock() called.
 			ctx.reportMismatchedUnlock(fn, pos, ref, false, "Unlock")
 		}
+	} else {
+		// Lock not held — C4: unlock of unlocked mutex.
+		// Defer reporting to Phase 3.3 so Requires facts are available for suppression.
+		ctx.unlockOfUnlockedCandidates = append(ctx.unlockOfUnlockedCandidates,
+			unlockOfUnlockedCandidate{Fn: fn, Pos: pos, Ref: *ref})
 	}
 	ls.unlock(*ref)
 }
@@ -265,20 +291,29 @@ func (ctx *passContext) recordCallSite(caller, callee *ssa.Function, pos token.P
 	ctx.callSites = append(ctx.callSites, cs)
 }
 
-// recordLockAcquisition records that a function directly acquires a lock.
-func (ctx *passContext) recordLockAcquisition(fn *ssa.Function, ref *lockRef) {
-	if ref.kind != fieldLock {
-		return
+// lockRefToMutexFieldKey normalizes a lockRef to a type-scoped mutexFieldKey.
+// Returns false if the lockRef cannot be normalized (non-field lock or unresolvable type).
+func lockRefToMutexFieldKey(ref *lockRef) (mutexFieldKey, bool) {
+	if ref == nil || ref.kind != fieldLock {
+		return mutexFieldKey{}, false
 	}
 	ptrType, ok := ref.base.Type().Underlying().(*types.Pointer)
 	if !ok {
-		return
+		return mutexFieldKey{}, false
 	}
 	named, ok := ptrType.Elem().(*types.Named)
 	if !ok {
+		return mutexFieldKey{}, false
+	}
+	return mutexFieldKey{StructType: named, FieldIndex: ref.fieldIndex}, true
+}
+
+// recordLockAcquisition records that a function directly acquires a lock.
+func (ctx *passContext) recordLockAcquisition(fn *ssa.Function, ref *lockRef) {
+	mfk, ok := lockRefToMutexFieldKey(ref)
+	if !ok {
 		return
 	}
-	mfk := mutexFieldKey{StructType: named, FieldIndex: ref.fieldIndex}
 	facts := ctx.getOrCreateFuncFacts(fn)
 	facts.Acquires[mfk] = true
 }

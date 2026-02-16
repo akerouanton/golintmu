@@ -50,8 +50,8 @@ golintmu's core design (SSA-based lock state tracking + interprocedural propagat
 |----|------|----------|-------|-----------------|---------|--------|
 | [C1](catalog/C01-inconsistent-field-locking.md) | Inconsistent field locking | Error | Iteration 1 | Yes | Field accessed under lock in some paths, without in others | **Done** |
 | [C2](catalog/C02-double-locking.md) | Double locking | Error | Iteration 4 | Yes | Mutex locked when already held — immediate deadlock | **Done** |
-| [C3](catalog/C03-lock-ordering.md) | Lock ordering violations | Error | Future | Yes | Inconsistent acquisition order across code paths — potential deadlock | |
-| [C4](catalog/C04-unlock-of-unlocked.md) | Unlock of unlocked mutex | Error | Future | No | `Unlock()` when mutex isn't held — runtime panic | |
+| [C3](catalog/C03-lock-ordering.md) | Lock ordering violations | Error | Iteration 11 | Yes | Inconsistent acquisition order across code paths — potential deadlock | **Done** |
+| [C4](catalog/C04-unlock-of-unlocked.md) | Unlock of unlocked mutex | Error | Iteration 11 | No | `Unlock()` when mutex isn't held — runtime panic | **Done** |
 | [C5](catalog/C05-lock-leak.md) | Lock leak / missing unlock | Error | Future | No | Function returns without unlocking on some code path | |
 | [C6](catalog/C06-rwmutex-misuse.md) | RWMutex misuse | Error | Iter 9 | Yes | Mismatched unlock, recursive RLock, lock upgrade attempt | **Done** |
 | [C7](catalog/C07-deferred-lock.md) | Deferred Lock instead of Unlock | Error | Future | No | `defer mu.Lock()` typo — deadlock at function exit | |

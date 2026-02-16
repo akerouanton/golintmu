@@ -68,6 +68,16 @@ func TestEmbedded(t *testing.T) {
 	analysistest.Run(t, testdata, singlePkgAnalyzer, "embedded")
 }
 
+func TestLockOrdering(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, singlePkgAnalyzer, "lock_ordering")
+}
+
+func TestUnlockOfUnlocked(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, singlePkgAnalyzer, "unlock_of_unlocked")
+}
+
 func TestCrossPackage(t *testing.T) {
 	testdata := analysistest.TestData()
 	analysistest.Run(t, testdata, analyzer.Analyzer, "crosspackage/pkga", "crosspackage/pkgb")

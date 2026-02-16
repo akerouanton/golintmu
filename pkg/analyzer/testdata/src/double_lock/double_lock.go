@@ -14,7 +14,7 @@ func (t *Tracker) DirectDoubleLock() {
 	t.mu.Lock() // want `Tracker\.mu is already held when locking Tracker\.mu`
 	t.value = 1
 	t.mu.Unlock()
-	t.mu.Unlock()
+	t.mu.Unlock() // want `Unlock\(\) called but Tracker\.mu is not held`
 }
 
 // --- Interprocedural double-lock (caller holds, callee locks) ---

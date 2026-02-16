@@ -55,6 +55,15 @@ type obsKey struct {
 	isRead bool
 }
 
+// unlockOfUnlockedCandidate records a potential C4 diagnostic collected during
+// Phase 1 (SSA walk). Reporting is deferred to Phase 3.3 so that funcLockFacts.Requires
+// (populated in Phase 2.5 and propagated in Phase 3) is available for suppression.
+type unlockOfUnlockedCandidate struct {
+	Fn  *ssa.Function
+	Pos token.Pos
+	Ref lockRef
+}
+
 // passContext holds state for a single analyzer pass.
 type passContext struct {
 	pass         *analysis.Pass
@@ -67,6 +76,12 @@ type passContext struct {
 	// Interprocedural analysis state.
 	callSites []callSiteRecord
 	funcFacts map[*ssa.Function]*funcLockFacts
+
+	// Deferred C4 candidates (collected Phase 1, reported Phase 3.3).
+	unlockOfUnlockedCandidates []unlockOfUnlockedCandidate
+
+	// Lock-order graph for C3 cycle detection.
+	lockOrderGraph *lockOrderGraph
 
 	// Concurrency analysis state.
 	// nil means "no entrypoints detected, treat all as concurrent".
@@ -90,7 +105,8 @@ func run(pass *analysis.Pass) (any, error) {
 		observations: make(map[fieldKey][]observation),
 		guards:       make(map[fieldKey]guardInfo),
 		observedAt:   make(map[obsKey]bool),
-		funcFacts:    make(map[*ssa.Function]*funcLockFacts),
+		funcFacts:      make(map[*ssa.Function]*funcLockFacts),
+		lockOrderGraph: newLockOrderGraph(),
 	}
 
 	// Phase 0: Parse annotation directives from comments.
@@ -111,8 +127,16 @@ func run(pass *analysis.Pass) (any, error) {
 	// Phase 3: Propagate requirements and acquisitions through call graph.
 	ctx.propagateRequirements()
 
+	// Phase 3.3: Report unlock-of-unlocked (collected during Phase 1,
+	// deferred to benefit from requirement propagation for suppression).
+	ctx.reportDeferredUnlockOfUnlocked()
+
 	// Phase 3.5: Detect concurrent entrypoints and compute reachability.
 	ctx.computeConcurrentContext()
+
+	// Phase 3.7: Collect interprocedural lock-order edges and detect cycles.
+	ctx.collectInterproceduralLockOrderEdges()
+	ctx.detectAndReportLockOrderCycles()
 
 	// Phase 4: Check violations (direct + interprocedural).
 	ctx.checkViolations()

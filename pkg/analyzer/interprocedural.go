@@ -186,6 +186,41 @@ func callerHoldsMutex(cs callSiteRecord, mfk mutexFieldKey) bool {
 	return false
 }
 
+// collectInterproceduralLockOrderEdges adds edges to the lock-order graph for
+// call sites where the caller holds locks and the callee acquires locks transitively.
+func (ctx *passContext) collectInterproceduralLockOrderEdges() {
+	for _, cs := range ctx.callSites {
+		calleeFacts, ok := ctx.funcFacts[cs.Callee]
+		if !ok {
+			continue
+		}
+		if len(calleeFacts.AcquiresTransitive) == 0 {
+			continue
+		}
+
+		// For each lock held by the caller at this call site...
+		for structType, heldRefs := range cs.HeldByStructType {
+			for _, hr := range heldRefs {
+				heldKey := mutexFieldKey{StructType: structType, FieldIndex: hr.FieldIndex}
+
+				// ...add an edge to each lock the callee transitively acquires.
+				// Skip same-key edges — those are interprocedural double-locks (C2).
+				for acquiredKey := range calleeFacts.AcquiresTransitive {
+					if heldKey == acquiredKey {
+						continue
+					}
+					ctx.lockOrderGraph.addEdge(lockOrderEdge{
+						From: heldKey,
+						To:   acquiredKey,
+						Pos:  cs.Pos,
+						Fn:   cs.Caller,
+					})
+				}
+			}
+		}
+	}
+}
+
 // hasCallers returns true if the function has any recorded call sites.
 func (ctx *passContext) hasCallers(fn *ssa.Function) bool {
 	for _, cs := range ctx.callSites {
