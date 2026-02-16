@@ -97,32 +97,20 @@ func isImmutableField(filteredObs []observation) bool {
 // It also computes NeedsExclusive: true when any observation is a write under
 // the inferred guard.
 func inferFieldGuard(key fieldKey, observations []observation) (guardInfo, bool) {
-	// Count how often each mutex field index appears as held.
-	counts := make(map[int]int)
+	// Phase 1: Count mutex frequency from WRITE observations only.
+	// Writes are the authoritative signal — the mutex held during writes is
+	// overwhelmingly the actual guard; reads under a different lock are
+	// coincidental (e.g. tandem-lock patterns).
+	best := pickMostFrequentMutex(key, observations, true)
 
-	for _, obs := range observations {
-		for _, hmf := range obs.SameBaseMutexFields {
-			// Self-exclusion: a mutex field is never guarded by itself.
-			if hmf.FieldIndex == key.FieldIndex {
-				continue
-			}
-			counts[hmf.FieldIndex]++
-		}
+	// Phase 2 (fallback): If no writes held a mutex, use ALL observations.
+	// This handles read-only fields or fields never written under a lock.
+	if best == -1 {
+		best = pickMostFrequentMutex(key, observations, false)
 	}
 
-	if len(counts) == 0 {
+	if best == -1 {
 		return guardInfo{}, false
-	}
-
-	// Pick the mutex held most often. Break ties by lowest field index for
-	// deterministic results across runs.
-	best := -1
-	var bestCount int
-	for fieldIdx, count := range counts {
-		if count > bestCount || (count == bestCount && (best == -1 || fieldIdx < best)) {
-			best = fieldIdx
-			bestCount = count
-		}
 	}
 
 	// Compute NeedsExclusive: true when any observation is a write under the guard.
@@ -143,4 +131,32 @@ func inferFieldGuard(key fieldKey, observations []observation) (guardInfo, bool)
 	}
 
 	return guardInfo{MutexFieldIndex: best, NeedsExclusive: needsExclusive}, true
+}
+
+// pickMostFrequentMutex counts how often each mutex field index appears as held
+// across the given observations and returns the most frequent one. If writesOnly
+// is true, only write observations are considered. Returns -1 if no mutex was found.
+func pickMostFrequentMutex(key fieldKey, observations []observation, writesOnly bool) int {
+	counts := make(map[int]int)
+	for _, obs := range observations {
+		if writesOnly && obs.IsRead {
+			continue
+		}
+		for _, hmf := range obs.SameBaseMutexFields {
+			if hmf.FieldIndex == key.FieldIndex {
+				continue
+			}
+			counts[hmf.FieldIndex]++
+		}
+	}
+
+	best := -1
+	var bestCount int
+	for fieldIdx, count := range counts {
+		if count > bestCount || (count == bestCount && (best == -1 || fieldIdx < best)) {
+			best = fieldIdx
+			bestCount = count
+		}
+	}
+	return best
 }

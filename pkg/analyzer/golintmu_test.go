@@ -98,6 +98,11 @@ func TestMultiReturn(t *testing.T) {
 	analysistest.Run(t, testdata, singlePkgAnalyzer, "multi_return")
 }
 
+func TestTandemLocks(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, singlePkgAnalyzer, "tandem_locks")
+}
+
 func TestCrossPackage(t *testing.T) {
 	testdata := analysistest.TestData()
 	analysistest.Run(t, testdata, analyzer.Analyzer, "crosspackage/pkga", "crosspackage/pkgb")
