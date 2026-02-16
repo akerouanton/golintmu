@@ -60,7 +60,7 @@ golintmu's core design (SSA-based lock state tracking + interprocedural propagat
 | [C10](catalog/C10-mutex-copying.md) | Mutex copying | Error | Future | No | Mutex copied by value — breaks synchronization | |
 | [C11](catalog/C11-inconsistent-branch-locking.md) | Inconsistent branch locking | Error | Iteration 3 | No | Lock held in one branch but not the other at merge point | **Done** |
 | [C12](catalog/C12-cross-goroutine-unlock.md) | Cross-goroutine unlock | Warning | Future | Yes | Lock/unlock in different goroutines — fragile pattern | |
-| [C13](catalog/C13-return-while-locked.md) | Return while holding lock | Warning | Future | Yes | Function returns with lock held, caller unaware | |
+| [C13](catalog/C13-return-while-locked.md) | Return while holding lock | Warning | Iteration 13 | Yes | Function returns with lock held, caller unaware | **Done** |
 | [C14](catalog/C14-exported-guarded-field.md) | Exported guarded field | Warning | Iteration 7 | Cross-pkg | Guarded field is exported — external callers can bypass lock | **Done** |
 
 > **Implementation scope:** Early iterations focus on **C1** and **C2**. The core design naturally supports C4, C5, C7, C8, C11, and C13 — they all fall out of checking `lockState` at the right program points. C3 adds a lock-order graph. C6 extends `lockState` to track lock level. C9, C10, and C12 are specialized analyses built on the same infrastructure.
@@ -348,10 +348,11 @@ Currently detected catalog IDs:
 | C3 | Lock ordering violations | Iteration 11 |
 | C4 | Unlock of unlocked mutex | Iteration 11 |
 | C5 | Lock leak / missing unlock | Iteration 12 |
+| C13 | Return while holding lock | Iteration 13 |
 
 For the full iteration-by-iteration history, see [`docs/changelog.md`](changelog.md).
 
-For the C3/C4 design, see [`docs/design-c3-c4.md`](design-c3-c4.md). For the C5 design, see [`docs/design-c5.md`](design-c5.md).
+For the C3/C4 design, see [`docs/design-c3-c4.md`](design-c3-c4.md). For the C5 design, see [`docs/design-c5.md`](design-c5.md). For the C13 design, see [`docs/design-c13.md`](design-c13.md).
 
 ## 9. Key Design Decisions Summary
 

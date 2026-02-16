@@ -172,12 +172,126 @@ func (ctx *passContext) reportMismatchedUnlock(fn *ssa.Function, pos token.Pos, 
 	}
 }
 
+// computeReturnsHolding derives per-function ReturnsHolding postconditions from
+// C5 lock-leak candidates. A function has ReturnsHolding(mfk) if ALL its return
+// points hold lock mfk (every return is a lock-leak candidate for that lock).
+func (ctx *passContext) computeReturnsHolding() {
+	// Group lock-leak candidates by (function, mutexFieldKey) → set of return positions.
+	type fnMfk struct {
+		fn  *ssa.Function
+		mfk mutexFieldKey
+	}
+	returnPositions := make(map[fnMfk]map[token.Pos]bool)
+
+	for _, candidates := range ctx.lockLeakCandidates {
+		for _, c := range candidates {
+			mfk, ok := lockRefToMutexFieldKey(&c.Ref)
+			if !ok {
+				continue
+			}
+			key := fnMfk{fn: c.Fn, mfk: mfk}
+			if returnPositions[key] == nil {
+				returnPositions[key] = make(map[token.Pos]bool)
+			}
+			returnPositions[key][c.Pos] = true
+		}
+	}
+
+	// Count actual *ssa.Return instructions per function.
+	returnCount := make(map[*ssa.Function]int)
+	for _, fn := range ctx.srcFuncs {
+		for _, block := range fn.Blocks {
+			for _, instr := range block.Instrs {
+				if _, ok := instr.(*ssa.Return); ok {
+					returnCount[fn]++
+				}
+			}
+		}
+	}
+
+	// A function has ReturnsHolding(mfk) if every return is a candidate.
+	for key, positions := range returnPositions {
+		if len(positions) == returnCount[key.fn] && returnCount[key.fn] > 0 {
+			ctx.getOrCreateFuncFacts(key.fn).ReturnsHolding[key.mfk] = true
+		}
+	}
+}
+
+// checkCallersOfAcquireHelpers checks callers of acquire helpers (functions with
+// ReturnsHolding) and reports when a caller never releases the acquired lock.
+func (ctx *passContext) checkCallersOfAcquireHelpers() {
+	// First, report callee-side diagnostics for acquire helpers.
+	for fn, facts := range ctx.funcFacts {
+		for mfk := range facts.ReturnsHolding {
+			ctx.reportAcquireHelper(fn, mfk)
+		}
+	}
+
+	// Then, check callers.
+	for _, cs := range ctx.callSites {
+		calleeFacts, ok := ctx.funcFacts[cs.Callee]
+		if !ok {
+			continue
+		}
+		if len(calleeFacts.ReturnsHolding) == 0 {
+			continue
+		}
+
+		callerFacts := ctx.getOrCreateFuncFacts(cs.Caller)
+
+		for mfk := range calleeFacts.ReturnsHolding {
+			// Caller propagates the postcondition (itself an acquire helper).
+			if callerFacts.ReturnsHolding[mfk] {
+				continue
+			}
+			// Caller releases the lock.
+			if callerFacts.Releases[mfk] {
+				continue
+			}
+			ctx.reportCallerMissingUnlock(cs, mfk)
+		}
+	}
+}
+
+// reportAcquireHelper emits a callee-side C13 diagnostic for a function that
+// returns while holding a lock on all paths.
+func (ctx *passContext) reportAcquireHelper(fn *ssa.Function, mfk mutexFieldKey) {
+	if ctx.isSuppressed(fn, fn.Pos()) {
+		return
+	}
+	name := mutexFieldKeyName(mfk)
+	if name == "" {
+		return
+	}
+	ctx.pass.Reportf(fn.Pos(), "%s() returns while holding %s -- callers must unlock", fn.Name(), name)
+}
+
+// reportCallerMissingUnlock emits a caller-side C13 diagnostic for a caller
+// that never releases the lock acquired by an acquire helper.
+func (ctx *passContext) reportCallerMissingUnlock(cs callSiteRecord, mfk mutexFieldKey) {
+	if ctx.isSuppressed(cs.Caller, cs.Pos) {
+		return
+	}
+	name := mutexFieldKeyName(mfk)
+	if name == "" {
+		return
+	}
+	ctx.pass.Reportf(cs.Pos, "%s() calls %s() which acquires %s, but %s() never releases it",
+		cs.Caller.Name(), cs.Callee.Name(), name, cs.Caller.Name())
+}
+
 // reportDeferredLockLeaks iterates C5 candidates collected during Phase 1
 // and reports those not suppressed by funcLockFacts.Requires.
 func (ctx *passContext) reportDeferredLockLeaks() {
 	for _, candidates := range ctx.lockLeakCandidates {
 		for _, c := range candidates {
 			if ctx.functionRequiresMutex(c.Fn, &c.Ref) {
+				continue
+			}
+			// Suppress C5 when C13 applies: the function is an acquire helper
+			// for this lock, so the leak is an intentional postcondition.
+			mfk, ok := lockRefToMutexFieldKey(&c.Ref)
+			if ok && ctx.funcFacts[c.Fn] != nil && ctx.funcFacts[c.Fn].ReturnsHolding[mfk] {
 				continue
 			}
 			ctx.reportLockLeak(c)
@@ -200,14 +314,38 @@ func (ctx *passContext) reportLockLeak(c lockLeakCandidate) {
 }
 
 // reportDeferredUnlockOfUnlocked iterates C4 candidates collected during Phase 1
-// and reports those not suppressed by funcLockFacts.Requires.
+// and reports those not suppressed by funcLockFacts.Requires or acquire helpers.
 func (ctx *passContext) reportDeferredUnlockOfUnlocked() {
 	for _, c := range ctx.unlockOfUnlockedCandidates {
 		if ctx.functionRequiresMutex(c.Fn, &c.Ref) {
 			continue
 		}
+		// Suppress C4 when unlocking a lock returned-holding by a callee.
+		// The unlock is expected: the callee acquired the lock and the
+		// caller is correctly releasing it.
+		mfk, ok := lockRefToMutexFieldKey(&c.Ref)
+		if ok && ctx.calleeReturnsHolding(c.Fn, mfk) {
+			continue
+		}
 		ctx.reportUnlockOfUnlocked(c.Fn, c.Pos, &c.Ref)
 	}
+}
+
+// calleeReturnsHolding returns true if any callee of fn has ReturnsHolding for mfk.
+func (ctx *passContext) calleeReturnsHolding(fn *ssa.Function, mfk mutexFieldKey) bool {
+	for _, cs := range ctx.callSites {
+		if cs.Caller != fn {
+			continue
+		}
+		calleeFacts, ok := ctx.funcFacts[cs.Callee]
+		if !ok {
+			continue
+		}
+		if calleeFacts.ReturnsHolding[mfk] {
+			return true
+		}
+	}
+	return false
 }
 
 // functionRequiresMutex returns true if fn's funcLockFacts.Requires contains

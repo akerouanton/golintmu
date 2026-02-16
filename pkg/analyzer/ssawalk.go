@@ -229,6 +229,11 @@ func (ctx *passContext) checkAndRecordUnlock(fn *ssa.Function, pos token.Pos, re
 			unlockOfUnlockedCandidate{Fn: fn, Pos: pos, Ref: *ref})
 	}
 	ls.unlock(*ref)
+
+	// Record that this function releases this mutex.
+	if mfk, ok := lockRefToMutexFieldKey(ref); ok {
+		ctx.getOrCreateFuncFacts(fn).Releases[mfk] = true
+	}
 }
 
 // resolveDeferredLockRef extracts the lockRef and method name from a deferred call.
@@ -298,6 +303,11 @@ func (ctx *passContext) recordDeferredUnlock(d *ssa.Defer, ls *lockState) {
 		return
 	}
 	ls.deferUnlock(*ref)
+
+	// Record that this function releases this mutex.
+	if mfk, ok := lockRefToMutexFieldKey(ref); ok {
+		ctx.getOrCreateFuncFacts(d.Parent()).Releases[mfk] = true
+	}
 }
 
 // checkReturnWithHeldLocks checks for locks held at a return point that are not

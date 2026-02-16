@@ -83,6 +83,11 @@ func TestLockLeak(t *testing.T) {
 	analysistest.Run(t, testdata, singlePkgAnalyzer, "lock_leak")
 }
 
+func TestReturnWhileLocked(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, singlePkgAnalyzer, "return_while_locked")
+}
+
 func TestCrossPackage(t *testing.T) {
 	testdata := analysistest.TestData()
 	analysistest.Run(t, testdata, analyzer.Analyzer, "crosspackage/pkga", "crosspackage/pkgb")

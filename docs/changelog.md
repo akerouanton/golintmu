@@ -163,6 +163,25 @@ Iteration-by-iteration implementation history. For the high-level architecture, 
 - Phase 3.7 placement: after Phase 3 (requirement propagation) and Phase 3.5 (concurrent context), before Phase 4
 - Scenarios: two-lock inversion, same-type self-edge, consistent ordering (no diagnostic), interprocedural ordering
 
+## Iteration 13: Return while holding lock (C13) ✅
+
+**Status: Completed** — Detects C13 (return while holding lock — acquire helpers and caller obligation).
+
+**Files:** Updated `golintmu.go`, `ssawalk.go`, `interprocedural.go`, `reporter.go`, `facts.go`, `golintmu_test.go`; added `testdata/src/return_while_locked/`
+
+**Scope:**
+- Compute `ReturnsHolding` postcondition from C5 candidates: function returns with lock held on all paths
+- Populate `Releases` set during Phase 1: track which functions explicitly call Unlock/defer Unlock
+- Callee-side diagnostic: acquire helper functions annotated with "returns while holding — callers must unlock"
+- Caller-side diagnostic: callers of acquire helpers that never release the acquired lock
+- Suppress C5 diagnostics for acquire helpers (mutually exclusive with C13)
+- Suppress C4 (unlock of unlocked) when caller unlocks a lock returned-holding by a callee
+- Support `//mu:ignore` on callee (suppresses callee-side diagnostic only) and caller (suppresses caller-side)
+- Cross-package export/import of `ReturnsHolding` in `FuncLockFact`
+- Phase 3.8 placement: after C3 lock ordering, before C5 reporting
+- C4 moved to Phase 3.9.3 (after C13) to benefit from `ReturnsHolding` for suppression
+- Scenarios: acquire helper (lock and return), unaware caller, aware caller (explicit unlock), aware caller (defer unlock), chain of helpers (level-by-level), suppressed callee/caller/call-line, partial-path return (C5 not C13), RWMutex acquire helper
+
 ---
 
 ## Future iterations (not scheduled)

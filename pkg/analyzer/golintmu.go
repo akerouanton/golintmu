@@ -142,19 +142,22 @@ func run(pass *analysis.Pass) (any, error) {
 	// Phase 3: Propagate requirements and acquisitions through call graph.
 	ctx.propagateRequirements()
 
-	// Phase 3.3: Report unlock-of-unlocked (collected during Phase 1,
-	// deferred to benefit from requirement propagation for suppression).
-	ctx.reportDeferredUnlockOfUnlocked()
-
-	// Phase 3.4: Report lock leaks (C5).
-	ctx.reportDeferredLockLeaks()
-
 	// Phase 3.5: Detect concurrent entrypoints and compute reachability.
 	ctx.computeConcurrentContext()
 
 	// Phase 3.7: Collect interprocedural lock-order edges and detect cycles.
 	ctx.collectInterproceduralLockOrderEdges()
 	ctx.detectAndReportLockOrderCycles()
+
+	// Phase 3.8: Detect acquire helpers and check their callers (C13).
+	ctx.computeReturnsHolding()
+	ctx.checkCallersOfAcquireHelpers()
+
+	// Phase 3.9: Report lock leaks (C5), suppressing acquire helpers.
+	ctx.reportDeferredLockLeaks()
+
+	// Phase 3.9.3: Report unlock-of-unlocked (C4), suppressing acquire helper callers.
+	ctx.reportDeferredUnlockOfUnlocked()
 
 	// Phase 4: Check violations (direct + interprocedural).
 	ctx.checkViolations()

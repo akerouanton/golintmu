@@ -45,6 +45,7 @@ type FuncLockFact struct {
 	Requires           []MutexRef
 	Acquires           []MutexRef
 	AcquiresTransitive []MutexRef
+	ReturnsHolding     []MutexRef
 }
 
 func (*FuncLockFact) AFact() {}
@@ -220,6 +221,11 @@ func (ctx *passContext) importFuncLockFacts() {
 				facts.AcquiresTransitive[mfk] = true
 			}
 		}
+		for _, ref := range fact.ReturnsHolding {
+			if mfk, ok := ctx.mutexRefToKey(ref); ok {
+				facts.ReturnsHolding[mfk] = true
+			}
+		}
 	}
 }
 
@@ -310,7 +316,7 @@ func (ctx *passContext) exportFuncLockFacts() {
 		if !fn.Object().Exported() {
 			continue
 		}
-		if len(facts.Requires) == 0 && len(facts.Acquires) == 0 && len(facts.AcquiresTransitive) == 0 {
+		if len(facts.Requires) == 0 && len(facts.Acquires) == 0 && len(facts.AcquiresTransitive) == 0 && len(facts.ReturnsHolding) == 0 {
 			continue
 		}
 
@@ -318,6 +324,7 @@ func (ctx *passContext) exportFuncLockFacts() {
 			Requires:           mutexFieldKeySetToRefs(facts.Requires),
 			Acquires:           mutexFieldKeySetToRefs(facts.Acquires),
 			AcquiresTransitive: mutexFieldKeySetToRefs(facts.AcquiresTransitive),
+			ReturnsHolding:     mutexFieldKeySetToRefs(facts.ReturnsHolding),
 		})
 	}
 }

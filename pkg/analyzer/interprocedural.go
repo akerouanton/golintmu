@@ -34,6 +34,8 @@ type funcLockFacts struct {
 	Requires           map[mutexFieldKey]bool // locks callers must hold
 	Acquires           map[mutexFieldKey]bool // locks this function directly acquires
 	AcquiresTransitive map[mutexFieldKey]bool // direct + transitive acquisitions (via callees)
+	ReturnsHolding     map[mutexFieldKey]bool // locks held at ALL return points
+	Releases           map[mutexFieldKey]bool // locks explicitly unlocked in this function
 }
 
 // getOrCreateFuncFacts returns the funcLockFacts for a function, creating it if needed.
@@ -45,6 +47,8 @@ func (ctx *passContext) getOrCreateFuncFacts(fn *ssa.Function) *funcLockFacts {
 		Requires:           make(map[mutexFieldKey]bool),
 		Acquires:           make(map[mutexFieldKey]bool),
 		AcquiresTransitive: make(map[mutexFieldKey]bool),
+		ReturnsHolding:     make(map[mutexFieldKey]bool),
+		Releases:           make(map[mutexFieldKey]bool),
 	}
 	ctx.funcFacts[fn] = facts
 	return facts
