@@ -182,6 +182,22 @@ Iteration-by-iteration implementation history. For the high-level architecture, 
 - C4 moved to Phase 3.9.3 (after C13) to benefit from `ReturnsHolding` for suppression
 - Scenarios: acquire helper (lock and return), unaware caller, aware caller (explicit unlock), aware caller (defer unlock), chain of helpers (level-by-level), suppressed callee/caller/call-line, partial-path return (C5 not C13), RWMutex acquire helper
 
+## Fix: Pre-publication constructor call suppression
+
+**Status: Completed** — Eliminates false positive interprocedural diagnostics when constructors call setup methods on structs before publishing them to shared state.
+
+**Files:** Updated `interprocedural.go`, `ssawalk.go`, `reporter.go`, `golintmu_test.go`, added `testdata/src/constructor_calls/`
+
+**Problem:** Constructor exclusion (`isConstructorLike`) was applied to direct field observations but not to the interprocedural pipeline. When a constructor like `CreateConfig()` called `setup()` on a newly allocated struct before storing it in a shared map, the callee's lock requirements propagated to the call site — producing false "must be held when calling" diagnostics even though the struct was local and unreachable from other goroutines.
+
+**Fix:**
+- Track the receiver SSA value at each call site (`ReceiverValue` field on `callSiteRecord`)
+- Add `isPrePublicationConstructorCall()` which checks: (1) callee is a method, (2) caller is constructor-like for the receiver's type, (3) the receiver hasn't been "published" (stored to a map or non-local field) before the call position
+- Suppress requirement propagation and violation reporting for pre-publication constructor calls
+- Publication detection uses position comparison within the same function, which is conservative for cross-branch cases
+
+See design.md §6 "Pre-publication constructor call suppression" for full details.
+
 ---
 
 ## Future iterations (not scheduled)

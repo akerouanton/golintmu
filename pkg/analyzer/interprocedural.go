@@ -27,6 +27,7 @@ type callSiteRecord struct {
 	Callee           *ssa.Function
 	Pos              token.Pos
 	HeldByStructType map[*types.Named][]heldMutexRef // normalized lock state: struct type → held mutex refs
+	ReceiverValue    ssa.Value                        // SSA value of the callee's receiver at the call site (nil for non-method calls)
 }
 
 // funcLockFacts tracks lock requirements and acquisitions for a function.
@@ -137,6 +138,9 @@ func (ctx *passContext) propagateRequirements() {
 					if callerHoldsMutex(cs, mfk) {
 						continue // caller satisfies this requirement
 					}
+					if isPrePublicationConstructorCall(cs) {
+						continue // pre-publication: struct not shared yet
+					}
 					// Propagate requirement to caller.
 					callerFacts := ctx.getOrCreateFuncFacts(cs.Caller)
 					if !callerFacts.Requires[mfk] {
@@ -173,6 +177,83 @@ func (ctx *passContext) propagateRequirements() {
 			}
 		}
 	}
+}
+
+// isPrePublicationConstructorCall returns true if the call site is a constructor
+// calling a method on a struct instance that hasn't been published to shared state yet.
+// "Publication" means storing the value into a map or a non-local field, making it
+// accessible from concurrent goroutines. Before publication, no locking is needed.
+//
+// Position comparison (pos < callPos) is used to determine ordering within the
+// same function. This is sound because token.Pos values are file offsets within
+// the same source file, so source-level ordering is preserved. For cross-branch
+// cases (publication in a different branch than the call), the comparison is
+// conservative: it may treat some pre-publication calls as post-publication
+// (still reporting violations), but never the reverse.
+func isPrePublicationConstructorCall(cs callSiteRecord) bool {
+	callee := cs.Callee
+	if callee.Signature.Recv() == nil {
+		return false // not a method call
+	}
+
+	// Extract the receiver's named struct type.
+	recvType := callee.Signature.Recv().Type()
+	ptrType, ok := recvType.(*types.Pointer)
+	if !ok {
+		return false
+	}
+	named, ok := ptrType.Elem().(*types.Named)
+	if !ok {
+		return false
+	}
+
+	// Caller must be constructor-like for the receiver's struct type.
+	if !isConstructorLike(cs.Caller, named) {
+		return false
+	}
+
+	if cs.ReceiverValue == nil {
+		return false
+	}
+
+	callPos := cs.Pos
+	if !callPos.IsValid() {
+		return false
+	}
+
+	// Scan the caller's blocks for publication of the receiver value.
+	// Publication = storing the value into a map or into a non-local field/pointer,
+	// making it reachable from other goroutines.
+	for _, block := range cs.Caller.Blocks {
+		for _, instr := range block.Instrs {
+			pos := instr.Pos()
+			if !pos.IsValid() {
+				continue
+			}
+			switch inst := instr.(type) {
+			case *ssa.MapUpdate:
+				if inst.Value == cs.ReceiverValue && pos < callPos {
+					return false // published before the call
+				}
+			case *ssa.Store:
+				if inst.Val == cs.ReceiverValue && inst.Addr != cs.ReceiverValue && pos < callPos {
+					// Storing the receiver into something else (a field, a pointer).
+					// This is a publication if the target is not a local alloc.
+					if !isLocalAlloc(inst.Addr) {
+						return false // published before the call
+					}
+				}
+			}
+		}
+	}
+
+	return true
+}
+
+// isLocalAlloc returns true if the value is a local stack allocation (Alloc with Heap=false).
+func isLocalAlloc(v ssa.Value) bool {
+	alloc, ok := v.(*ssa.Alloc)
+	return ok && !alloc.Heap
 }
 
 // callerHoldsMutex returns true if the call site record indicates the caller

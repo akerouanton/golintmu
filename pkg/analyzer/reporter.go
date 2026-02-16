@@ -518,6 +518,9 @@ func (ctx *passContext) checkInterproceduralViolations() {
 				if ctx.shouldSuppressDirectViolation(cs.Caller, mfk) {
 					continue
 				}
+				if isPrePublicationConstructorCall(cs) {
+					continue
+				}
 				ctx.reportMissingLockAtCallSite(cs, mfk)
 			}
 		}

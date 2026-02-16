@@ -161,7 +161,11 @@ func (ctx *passContext) processCall(fn *ssa.Function, call *ssa.Call, ls *lockSt
 	}
 
 	// Non-lock static call: record call site for interprocedural analysis.
-	ctx.recordCallSite(fn, callee, call.Pos(), ls)
+	var receiverVal ssa.Value
+	if callee.Signature.Recv() != nil && len(common.Args) > 0 {
+		receiverVal = common.Args[0]
+	}
+	ctx.recordCallSite(fn, callee, call.Pos(), ls, receiverVal)
 }
 
 // checkAndRecordLockAcquire checks for intra-function double-lock (including
@@ -349,12 +353,13 @@ func (ctx *passContext) checkReturnWithHeldLocks(fn *ssa.Function, ret *ssa.Retu
 }
 
 // recordCallSite records a static call with the normalized lock state at the call point.
-func (ctx *passContext) recordCallSite(caller, callee *ssa.Function, pos token.Pos, ls *lockState) {
+func (ctx *passContext) recordCallSite(caller, callee *ssa.Function, pos token.Pos, ls *lockState, receiver ssa.Value) {
 	cs := callSiteRecord{
 		Caller:           caller,
 		Callee:           callee,
 		Pos:              pos,
 		HeldByStructType: normalizeLockState(ls),
+		ReceiverValue:    receiver,
 	}
 	ctx.callSites = append(ctx.callSites, cs)
 }

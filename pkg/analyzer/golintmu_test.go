@@ -103,6 +103,11 @@ func TestTandemLocks(t *testing.T) {
 	analysistest.Run(t, testdata, singlePkgAnalyzer, "tandem_locks")
 }
 
+func TestConstructorCalls(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, singlePkgAnalyzer, "constructor_calls")
+}
+
 func TestCrossPackage(t *testing.T) {
 	testdata := analysistest.TestData()
 	analysistest.Run(t, testdata, analyzer.Analyzer, "crosspackage/pkga", "crosspackage/pkgb")

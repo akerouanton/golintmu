@@ -306,6 +306,46 @@ False positives are the primary risk for adoption. The following strategies miti
 ### Constructor exclusion
 Functions named `New*`, `Make*`, `Create*`, or that return the struct type are considered constructors. Field accesses inside them don't count toward inference and aren't flagged. The struct isn't shared yet.
 
+### Pre-publication constructor call suppression
+
+Constructor exclusion handles *direct* field accesses inside constructors, but doesn't cover the interprocedural case: a constructor that calls setup methods on a struct it's building. Without suppression, the callee's lock requirements propagate to the constructor's call site, producing false positives like `Config.mu must be held when calling setup()` — even though the struct hasn't escaped the constructor yet.
+
+**Struct publication** is the point at which a locally constructed struct becomes reachable from concurrent goroutines — typically by storing it into a shared map, assigning it to a field of a shared object, or sending it on a channel. Before publication, the struct is confined to a single goroutine and needs no synchronization.
+
+The suppression works as follows:
+
+1. During the SSA walk, each call site records the **receiver SSA value** (the struct instance the method is called on).
+
+2. When propagating lock requirements bottom-up through the call graph, before propagating a callee's requirement to a caller, check whether the call is a **pre-publication constructor call**:
+   - The callee is a method on a struct type
+   - The caller is constructor-like for that struct type
+   - The receiver value has not been "published" before the call position
+
+3. Publication is detected by scanning the caller's SSA instructions for operations that make the receiver reachable from other goroutines:
+   - `*ssa.MapUpdate` where the value is the receiver (e.g. `m.configs[name] = c`)
+   - `*ssa.Store` where the stored value is the receiver and the target is not a local stack allocation (e.g. assigning to a field of a shared struct)
+
+4. Position comparison (`pos < callPos`) determines whether publication occurs before or after the method call. This is sound within a single function because `token.Pos` values are file offsets — source ordering is preserved. For cross-branch cases, the comparison is conservative: it may treat some pre-publication calls as post-publication (still reporting violations), but never the reverse.
+
+**Example:**
+
+```go
+func (m *Manager) CreateConfig(name string) *Config {
+    c := &Config{}
+    c.setup()              // ← pre-publication: suppressed (no diagnostic)
+    m.configs[name] = c    // ← publication point
+    return c
+}
+
+func (m *Manager) CreateAndPublishFirst(name string) {
+    c := &Config{}
+    m.configs[name] = c    // ← publication point
+    c.setup()              // ← post-publication: diagnostic reported
+}
+```
+
+This mirrors how the Go memory model works: a struct that hasn't been shared doesn't need synchronization. The suppression is scoped narrowly — it only applies when all three conditions (method call, constructor caller, pre-publication receiver) are met.
+
 ### `init()` exclusion
 Package `init()` functions run single-threaded before `main()`. Excluded from both inference and violation checking.
 
