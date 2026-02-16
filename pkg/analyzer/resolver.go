@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"go/token"
 	"go/types"
 
 	"golang.org/x/tools/go/ssa"
@@ -33,7 +34,7 @@ func resolveLockRef(v ssa.Value) *lockRef {
 	if !isMutexType(field.Type()) {
 		return nil
 	}
-	base := unwrapSSAValue(fa.X)
+	base := canonicalizeBase(fa.X)
 	return &lockRef{
 		kind:       fieldLock,
 		base:       base,
@@ -41,11 +42,33 @@ func resolveLockRef(v ssa.Value) *lockRef {
 	}
 }
 
-// unwrapSSAValue strips Phi nodes (if all edges agree), UnOp (dereference),
-// and other pass-through SSA values to find the underlying value.
+// unwrapSSAValue strips Phi nodes (if all edges agree) to find the underlying value.
 func unwrapSSAValue(v ssa.Value) ssa.Value {
 	visited := make(map[*ssa.Phi]bool)
 	return unwrapSSAValueVisited(v, visited)
+}
+
+// canonicalizeBase returns a canonical SSA value for use as a lockRef base.
+// It follows through UnOp dereferences (token.MUL) in addition to Phi nodes.
+// This is needed because when a closure captures a variable, the SSA builder
+// "lifts" it to a heap-allocated cell. Each use of the variable becomes a
+// separate load (UnOp deref) from the cell, producing different SSA values for
+// the same logical variable. By following through the deref to the underlying
+// Alloc, two loads from the same cell resolve to the same canonical value.
+func canonicalizeBase(v ssa.Value) ssa.Value {
+	v = unwrapSSAValue(v)
+	seen := make(map[ssa.Value]bool)
+	for {
+		if seen[v] {
+			return v
+		}
+		seen[v] = true
+		unop, ok := v.(*ssa.UnOp)
+		if !ok || unop.Op != token.MUL {
+			return v
+		}
+		v = unwrapSSAValue(unop.X)
+	}
 }
 
 func unwrapSSAValueVisited(v ssa.Value, visited map[*ssa.Phi]bool) ssa.Value {
@@ -135,7 +158,7 @@ func resolveEmbeddedMutexRef(recv ssa.Value, methodName string) *lockRef {
 		if isRWLockMethod(methodName) && !isRWMutexType(field.Type()) {
 			continue
 		}
-		return &lockRef{kind: fieldLock, base: recv, fieldIndex: i}
+		return &lockRef{kind: fieldLock, base: canonicalizeBase(recv), fieldIndex: i}
 	}
 	return nil
 }
@@ -183,5 +206,5 @@ func resolveFieldAccess(v ssa.Value) (base ssa.Value, fieldIdx int, structType *
 		return nil, 0, nil, false
 	}
 
-	return unwrapSSAValue(fa.X), fa.Field, named, true
+	return canonicalizeBase(fa.X), fa.Field, named, true
 }

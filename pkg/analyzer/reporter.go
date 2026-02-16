@@ -605,19 +605,41 @@ func lockRefName(ref lockRef) string {
 	if ref.kind != fieldLock {
 		return ""
 	}
-	ptrType, ok := ref.base.Type().Underlying().(*types.Pointer)
-	if !ok {
-		return ""
-	}
-	named, ok := ptrType.Elem().(*types.Named)
-	if !ok {
-		return ""
-	}
-	st, ok := named.Underlying().(*types.Struct)
+	named, st, ok := resolveStructFromBase(ref.base)
 	if !ok || ref.fieldIndex >= st.NumFields() {
 		return ""
 	}
 	return named.Obj().Name() + "." + st.Field(ref.fieldIndex).Name()
+}
+
+// resolveStructFromBase extracts the named struct type from a lockRef base value.
+// Handles both direct struct pointers (*S) and lifted variable cells (**S) by
+// peeling through pointer layers until a *types.Named struct is found.
+// The depth limit guards against pathological type structures.
+func resolveStructFromBase(base ssa.Value) (*types.Named, *types.Struct, bool) {
+	if base == nil {
+		return nil, nil, false
+	}
+	t := base.Type()
+	if t == nil {
+		return nil, nil, false
+	}
+	// Depth limit: in practice only 1 (*S) or 2 (**S for lifted vars) iterations.
+	for depth := 0; depth < 4; depth++ {
+		pt, ok := t.Underlying().(*types.Pointer)
+		if !ok {
+			return nil, nil, false
+		}
+		if named, ok := pt.Elem().(*types.Named); ok {
+			st, ok := named.Underlying().(*types.Struct)
+			if !ok {
+				return nil, nil, false
+			}
+			return named, st, true
+		}
+		t = pt.Elem()
+	}
+	return nil, nil, false
 }
 
 // blockPos returns the position of the first non-Phi instruction in a block.

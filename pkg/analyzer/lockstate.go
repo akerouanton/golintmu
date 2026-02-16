@@ -16,9 +16,12 @@ const (
 
 // lockRef identifies a specific lock instance. Two lockRefs are equal when they
 // refer to the same logical lock (same base SSA value and field index path).
+// The base field is canonicalized via canonicalizeBase to follow through UnOp
+// dereferences from SSA variable lifting (closures capturing variables), so
+// that multiple loads from the same heap cell resolve to the same lockRef.
 type lockRef struct {
 	kind       lockRefKind
-	base       ssa.Value // the SSA value for the struct containing the mutex
+	base       ssa.Value // canonical SSA value for the struct containing the mutex
 	fieldIndex int       // field index within the struct
 }
 

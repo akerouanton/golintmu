@@ -365,11 +365,7 @@ func lockRefToMutexFieldKey(ref *lockRef) (mutexFieldKey, bool) {
 	if ref == nil || ref.kind != fieldLock {
 		return mutexFieldKey{}, false
 	}
-	ptrType, ok := ref.base.Type().Underlying().(*types.Pointer)
-	if !ok {
-		return mutexFieldKey{}, false
-	}
-	named, ok := ptrType.Elem().(*types.Named)
+	named, _, ok := resolveStructFromBase(ref.base)
 	if !ok {
 		return mutexFieldKey{}, false
 	}
