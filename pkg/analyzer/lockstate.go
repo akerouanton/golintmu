@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"go/token"
 	"sort"
 
 	"golang.org/x/tools/go/ssa"
@@ -26,20 +27,25 @@ type lockRef struct {
 type heldLock struct {
 	ref       lockRef
 	exclusive bool
+	pos       token.Pos // position where the lock was acquired
 }
 
 // lockState tracks which locks are currently held at a given program point.
 type lockState struct {
-	held map[lockRef]heldLock
+	held            map[lockRef]heldLock
+	deferredUnlocks map[lockRef]bool // locks with pending deferred unlock on this path
 }
 
 func newLockState() *lockState {
-	return &lockState{held: make(map[lockRef]heldLock)}
+	return &lockState{
+		held:            make(map[lockRef]heldLock),
+		deferredUnlocks: make(map[lockRef]bool),
+	}
 }
 
 // lock adds a lock to the held set.
-func (ls *lockState) lock(ref lockRef, exclusive bool) {
-	ls.held[ref] = heldLock{ref: ref, exclusive: exclusive}
+func (ls *lockState) lock(ref lockRef, exclusive bool, pos token.Pos) {
+	ls.held[ref] = heldLock{ref: ref, exclusive: exclusive, pos: pos}
 }
 
 // unlock removes a lock from the held set.
@@ -49,20 +55,35 @@ func (ls *lockState) unlock(ref lockRef) {
 
 // fork returns a shallow copy of the lock state for use at branch points.
 func (ls *lockState) fork() *lockState {
-	cp := &lockState{held: make(map[lockRef]heldLock, len(ls.held))}
+	cp := &lockState{
+		held:            make(map[lockRef]heldLock, len(ls.held)),
+		deferredUnlocks: make(map[lockRef]bool, len(ls.deferredUnlocks)),
+	}
 	for k, v := range ls.held {
 		cp.held[k] = v
+	}
+	for k, v := range ls.deferredUnlocks {
+		cp.deferredUnlocks[k] = v
 	}
 	return cp
 }
 
-// equalHeld returns true if both states hold exactly the same set of lockRef keys.
+// equalHeld returns true if both states hold exactly the same set of lockRef keys
+// and the same set of deferred unlocks.
 func (ls *lockState) equalHeld(other *lockState) bool {
 	if len(ls.held) != len(other.held) {
 		return false
 	}
 	for k := range ls.held {
 		if _, ok := other.held[k]; !ok {
+			return false
+		}
+	}
+	if len(ls.deferredUnlocks) != len(other.deferredUnlocks) {
+		return false
+	}
+	for k := range ls.deferredUnlocks {
+		if _, ok := other.deferredUnlocks[k]; !ok {
 			return false
 		}
 	}
@@ -104,5 +125,15 @@ func (ls *lockState) intersect(other *lockState) *lockState {
 			}
 		}
 	}
+	for k := range ls.deferredUnlocks {
+		if other.deferredUnlocks[k] {
+			result.deferredUnlocks[k] = true
+		}
+	}
 	return result
+}
+
+// deferUnlock marks a lock as having a pending deferred unlock on this path.
+func (ls *lockState) deferUnlock(ref lockRef) {
+	ls.deferredUnlocks[ref] = true
 }

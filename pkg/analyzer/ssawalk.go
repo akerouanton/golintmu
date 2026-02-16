@@ -95,6 +95,10 @@ func (ctx *passContext) processInstruction(fn *ssa.Function, instr ssa.Instructi
 		// However, we DO check for mismatched unlock mode (e.g. defer mu.Unlock()
 		// after mu.RLock()) without modifying lock state.
 		ctx.checkDeferredUnlockMismatch(fn, inst, ls)
+		// Record deferred unlock for C5 lock-leak detection.
+		ctx.recordDeferredUnlock(inst, ls)
+	case *ssa.Return:
+		ctx.checkReturnWithHeldLocks(fn, inst, ls)
 	case *ssa.Store:
 		ctx.processStore(fn, inst, ls)
 	case *ssa.UnOp:
@@ -204,7 +208,7 @@ func (ctx *passContext) checkAndRecordLockAcquire(fn *ssa.Function, pos token.Po
 	ctx.recordLockAcquisition(fn, ref)
 
 	// Actually acquire the lock.
-	ls.lock(*ref, exclusive)
+	ls.lock(*ref, exclusive, pos)
 }
 
 // checkAndRecordUnlock checks for mismatched unlock (e.g. Unlock after RLock)
@@ -227,9 +231,9 @@ func (ctx *passContext) checkAndRecordUnlock(fn *ssa.Function, pos token.Pos, re
 	ls.unlock(*ref)
 }
 
-// checkDeferredUnlockMismatch checks a deferred call for mismatched unlock mode
-// without modifying lock state (preserving existing defer semantics).
-func (ctx *passContext) checkDeferredUnlockMismatch(fn *ssa.Function, d *ssa.Defer, ls *lockState) {
+// resolveDeferredLockRef extracts the lockRef and method name from a deferred call.
+// Returns nil if the deferred call is not a lock/unlock method.
+func resolveDeferredLockRef(d *ssa.Defer) (*lockRef, string) {
 	common := d.Common()
 
 	var methodName string
@@ -237,24 +241,24 @@ func (ctx *passContext) checkDeferredUnlockMismatch(fn *ssa.Function, d *ssa.Def
 
 	if common.IsInvoke() {
 		if common.Method == nil {
-			return
+			return nil, ""
 		}
 		methodName = common.Method.Name()
 		recv = common.Value
 	} else {
 		callee := common.StaticCallee()
 		if callee == nil {
-			return
+			return nil, ""
 		}
 		methodName = callee.Name()
 		if len(common.Args) == 0 {
-			return
+			return nil, ""
 		}
 		recv = common.Args[0]
 	}
 
-	if !isLockMethod(methodName) || isLockAcquire(methodName) {
-		return
+	if !isLockMethod(methodName) {
+		return nil, ""
 	}
 
 	var ref *lockRef
@@ -263,7 +267,14 @@ func (ctx *passContext) checkDeferredUnlockMismatch(fn *ssa.Function, d *ssa.Def
 	} else {
 		ref = resolveEmbeddedMutexRef(recv, methodName)
 	}
-	if ref == nil {
+	return ref, methodName
+}
+
+// checkDeferredUnlockMismatch checks a deferred call for mismatched unlock mode
+// without modifying lock state (preserving existing defer semantics).
+func (ctx *passContext) checkDeferredUnlockMismatch(fn *ssa.Function, d *ssa.Defer, ls *lockState) {
+	ref, methodName := resolveDeferredLockRef(d)
+	if ref == nil || isLockAcquire(methodName) {
 		return
 	}
 
@@ -277,6 +288,40 @@ func (ctx *passContext) checkDeferredUnlockMismatch(fn *ssa.Function, d *ssa.Def
 		ctx.reportMismatchedUnlock(fn, d.Pos(), ref, true, "RUnlock")
 	} else if !existing.exclusive && exclusiveUnlock {
 		ctx.reportMismatchedUnlock(fn, d.Pos(), ref, false, "Unlock")
+	}
+}
+
+// recordDeferredUnlock records a deferred unlock in the lock state for C5 leak detection.
+func (ctx *passContext) recordDeferredUnlock(d *ssa.Defer, ls *lockState) {
+	ref, methodName := resolveDeferredLockRef(d)
+	if ref == nil || isLockAcquire(methodName) {
+		return
+	}
+	ls.deferUnlock(*ref)
+}
+
+// checkReturnWithHeldLocks checks for locks held at a return point that are not
+// covered by a deferred unlock. Collects candidates for deferred C5 reporting.
+// Uses map keyed by return position to clear stale candidates on block re-walks.
+func (ctx *passContext) checkReturnWithHeldLocks(fn *ssa.Function, ret *ssa.Return, ls *lockState) {
+	retPos := ret.Pos()
+	// Clear any candidates from previous walks of this return point.
+	delete(ctx.lockLeakCandidates, retPos)
+
+	var candidates []lockLeakCandidate
+	for ref, hl := range ls.held {
+		if ls.deferredUnlocks[ref] {
+			continue
+		}
+		candidates = append(candidates, lockLeakCandidate{
+			Fn:         fn,
+			Pos:        retPos,
+			Ref:        ref,
+			AcquirePos: hl.pos,
+		})
+	}
+	if len(candidates) > 0 {
+		ctx.lockLeakCandidates[retPos] = candidates
 	}
 }
 

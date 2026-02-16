@@ -64,6 +64,16 @@ type unlockOfUnlockedCandidate struct {
 	Ref lockRef
 }
 
+// lockLeakCandidate records a potential C5 diagnostic collected during
+// Phase 1 (SSA walk). Reporting is deferred to Phase 3.4 so that funcLockFacts.Requires
+// (populated in Phase 2.5 and propagated in Phase 3) is available for suppression.
+type lockLeakCandidate struct {
+	Fn         *ssa.Function
+	Pos        token.Pos // return position
+	Ref        lockRef
+	AcquirePos token.Pos // where the lock was acquired
+}
+
 // passContext holds state for a single analyzer pass.
 type passContext struct {
 	pass         *analysis.Pass
@@ -79,6 +89,10 @@ type passContext struct {
 
 	// Deferred C4 candidates (collected Phase 1, reported Phase 3.3).
 	unlockOfUnlockedCandidates []unlockOfUnlockedCandidate
+
+	// Deferred C5 candidates (collected Phase 1, reported Phase 3.4).
+	// Keyed by return position to allow clearing stale candidates on block re-walks.
+	lockLeakCandidates map[token.Pos][]lockLeakCandidate
 
 	// Lock-order graph for C3 cycle detection.
 	lockOrderGraph *lockOrderGraph
@@ -105,8 +119,9 @@ func run(pass *analysis.Pass) (any, error) {
 		observations: make(map[fieldKey][]observation),
 		guards:       make(map[fieldKey]guardInfo),
 		observedAt:   make(map[obsKey]bool),
-		funcFacts:      make(map[*ssa.Function]*funcLockFacts),
-		lockOrderGraph: newLockOrderGraph(),
+		funcFacts:          make(map[*ssa.Function]*funcLockFacts),
+		lockOrderGraph:     newLockOrderGraph(),
+		lockLeakCandidates: make(map[token.Pos][]lockLeakCandidate),
 	}
 
 	// Phase 0: Parse annotation directives from comments.
@@ -130,6 +145,9 @@ func run(pass *analysis.Pass) (any, error) {
 	// Phase 3.3: Report unlock-of-unlocked (collected during Phase 1,
 	// deferred to benefit from requirement propagation for suppression).
 	ctx.reportDeferredUnlockOfUnlocked()
+
+	// Phase 3.4: Report lock leaks (C5).
+	ctx.reportDeferredLockLeaks()
 
 	// Phase 3.5: Detect concurrent entrypoints and compute reachability.
 	ctx.computeConcurrentContext()

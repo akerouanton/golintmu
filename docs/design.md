@@ -52,7 +52,7 @@ golintmu's core design (SSA-based lock state tracking + interprocedural propagat
 | [C2](catalog/C02-double-locking.md) | Double locking | Error | Iteration 4 | Yes | Mutex locked when already held — immediate deadlock | **Done** |
 | [C3](catalog/C03-lock-ordering.md) | Lock ordering violations | Error | Iteration 11 | Yes | Inconsistent acquisition order across code paths — potential deadlock | **Done** |
 | [C4](catalog/C04-unlock-of-unlocked.md) | Unlock of unlocked mutex | Error | Iteration 11 | No | `Unlock()` when mutex isn't held — runtime panic | **Done** |
-| [C5](catalog/C05-lock-leak.md) | Lock leak / missing unlock | Error | Future | No | Function returns without unlocking on some code path | |
+| [C5](catalog/C05-lock-leak.md) | Lock leak / missing unlock | Error | Iteration 12 | No | Function returns without unlocking on some code path | **Done** |
 | [C6](catalog/C06-rwmutex-misuse.md) | RWMutex misuse | Error | Iter 9 | Yes | Mismatched unlock, recursive RLock, lock upgrade attempt | **Done** |
 | [C7](catalog/C07-deferred-lock.md) | Deferred Lock instead of Unlock | Error | Future | No | `defer mu.Lock()` typo — deadlock at function exit | |
 | [C8](catalog/C08-lock-across-goroutine.md) | Lock held across goroutine spawn | Warning | Future | No | Goroutine spawned while lock is held | |
@@ -345,10 +345,13 @@ Currently detected catalog IDs:
 | C6 | RWMutex misuse | Iteration 9 |
 | C11 | Inconsistent branch locking | Iteration 3 |
 | C14 | Exported guarded field | Iteration 7 |
+| C3 | Lock ordering violations | Iteration 11 |
+| C4 | Unlock of unlocked mutex | Iteration 11 |
+| C5 | Lock leak / missing unlock | Iteration 12 |
 
 For the full iteration-by-iteration history, see [`docs/changelog.md`](changelog.md).
 
-For upcoming C3 (lock ordering) and C4 (unlock of unlocked) designs, see [`docs/design-c3-c4.md`](design-c3-c4.md).
+For the C3/C4 design, see [`docs/design-c3-c4.md`](design-c3-c4.md). For the C5 design, see [`docs/design-c5.md`](design-c5.md).
 
 ## 9. Key Design Decisions Summary
 

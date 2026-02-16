@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
+	"path/filepath"
 
 	"golang.org/x/tools/go/ssa"
 )
@@ -169,6 +170,33 @@ func (ctx *passContext) reportMismatchedUnlock(fn *ssa.Function, pos token.Pos, 
 	} else {
 		ctx.pass.Reportf(pos, "%s is read-locked but %s() was called \u2014 use RUnlock()", name, unlockMethod)
 	}
+}
+
+// reportDeferredLockLeaks iterates C5 candidates collected during Phase 1
+// and reports those not suppressed by funcLockFacts.Requires.
+func (ctx *passContext) reportDeferredLockLeaks() {
+	for _, candidates := range ctx.lockLeakCandidates {
+		for _, c := range candidates {
+			if ctx.functionRequiresMutex(c.Fn, &c.Ref) {
+				continue
+			}
+			ctx.reportLockLeak(c)
+		}
+	}
+}
+
+// reportLockLeak emits a C5 diagnostic for returning without unlocking a held mutex.
+func (ctx *passContext) reportLockLeak(c lockLeakCandidate) {
+	if ctx.isSuppressed(c.Fn, c.Pos) {
+		return
+	}
+	name := lockRefName(c.Ref)
+	if name == "" {
+		return
+	}
+	acquirePos := ctx.pass.Fset.Position(c.AcquirePos)
+	ctx.pass.Reportf(c.Pos, "return without unlocking %s (locked at %s:%d:%d)",
+		name, filepath.Base(acquirePos.Filename), acquirePos.Line, acquirePos.Column)
 }
 
 // reportDeferredUnlockOfUnlocked iterates C4 candidates collected during Phase 1
