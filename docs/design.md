@@ -222,19 +222,25 @@ func (s *S) helper() {
 
 **Detection**: `BadCaller()` calls `helper()` without holding `s.mu` → report violation.
 
-**Diagnostic output** shows the call chain:
+**Diagnostic output** by default shows only the top-level violation:
 ```
-server.go:15:5: s.mu must be held when calling s.helper()
-  server.go:15:5: BadCaller() calls helper() without holding s.mu
-  server.go:20:5: helper() accesses s.count (guarded by s.mu)
+server.go:15:5: S.mu must be held when calling helper()
 ```
 
-For deeper chains, intermediate frames are elided:
+With `-verbose`, provenance lines explain *why* the callee requires the lock:
 ```
-server.go:15:5: s.mu must be held when calling s.handler()
-  → eventually accesses s.count at server.go:42:5 (guarded by s.mu)
-  (3 intermediate calls elided, use -trace-depth=N for full trace)
+server.go:15:5: S.mu must be held when calling helper()
+	helper() accesses S.count at server.go:20:5
 ```
+
+For deeper chains, the transitive call path is shown:
+```
+server.go:15:5: S.mu must be held when calling handler()
+	handler() calls helper() at server.go:25:3
+	helper() accesses S.count at server.go:20:5
+```
+
+Provenance output is capped at 3 chains per diagnostic, with recursion depth limited to 5 hops.
 
 **Cycle handling**: Recursive call chains are handled by iterating until a fixed point. If function A calls B and B calls A, we process them until no new requirements are discovered.
 
@@ -280,22 +286,28 @@ Facts are gob-encoded and persisted by the analysis framework. When analyzing pa
 
 Human-readable diagnostics via `pass.Reportf()`, compatible with standard Go tooling.
 
-**Call chain display:** When a violation involves an interprocedural call chain, show up to 3 frames by default:
+**Default mode:** Diagnostics are single-line messages identifying the violation:
 
 ```
-server.go:15:5: s.mu must be held when calling s.helper()
-  server.go:15:5: BadCaller() calls helper() without holding s.mu
-  server.go:20:5: helper() accesses s.count (guarded by s.mu)
+server.go:15:5: S.mu must be held when calling helper()
 ```
 
-For deeper chains, intermediate frames are elided:
+**Verbose mode (`-verbose` flag):** Appends provenance lines explaining *why* the callee requires the lock. Each provenance chain traces the path from the called function to the root cause (a direct field access or a transitive callee). This is implemented by tracking `requirementOrigin` records during requirement derivation (Phase 2.5) and propagation (Phase 3), then walking the origin chains at reporting time (Phase 4).
+
 ```
-server.go:15:5: s.mu must be held when calling s.handler()
-  → eventually accesses s.count at server.go:42:5 (guarded by s.mu)
-  (3 intermediate calls elided, use -trace-depth=N for full trace)
+server.go:15:5: S.mu must be held when calling handler()
+	handler() calls helper() at server.go:25:3
+	helper() accesses S.count at server.go:20:5
 ```
 
-**Alternative considered:** A `-v` flag for verbose output (show all frames always) vs. `-trace-depth=N` for fine-grained control. Starting with 3 frames max; may switch to configurable depth if users need it.
+Origin tracking is gated behind the `-verbose` flag: when disabled, no `requirementOrigin` structs are allocated and no origin maps are populated, ensuring zero overhead in normal mode.
+
+**Provenance limits:**
+- Up to 3 provenance chains per diagnostic (a function may require a lock due to multiple distinct field accesses or call paths)
+- Chains separated by blank lines when multiple are shown
+- Recursion depth capped at 5 hops to prevent runaway output on deep call graphs
+
+**Design decision:** A simple boolean `-verbose` flag was chosen over `-trace-depth=N` for simplicity. The 3-chain cap with depth-5 recursion covers practical cases without configuration burden. This can be revisited if users need finer control.
 
 **Future output formats:** JSON (`-json` flag) and SARIF for CI integration (GitHub Code Scanning, etc.). Not in MVP.
 
@@ -408,7 +420,7 @@ For the C3/C4 design, see [`docs/design-c3-c4.md`](design-c3-c4.md). For the C5 
 | Annotations on data | None | Core differentiator — inference only |
 | Annotation prefix | `//mu:` | Concise; consistent with tool purpose |
 | Lock wrappers | Not handled (MVP) | Treat callbacks as opaque; document limitation |
-| Diagnostic depth | 3 frames max (default) | Readable; `-trace-depth=N` for tunability |
+| Diagnostic depth | Provenance via `-verbose` flag | Off by default (zero overhead); 3 chains max, depth-5 recursion when enabled |
 | Output format | Human-readable (MVP) | JSON/SARIF are follow-ups |
 | Multi-mutex inference | Per-field by co-occurrence | Correctness over simplicity |
 | Exported guarded fields | Warn | Encourage encapsulation; cross-package facts are future |

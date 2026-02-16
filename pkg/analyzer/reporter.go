@@ -544,7 +544,94 @@ func (ctx *passContext) reportMissingLockAtCallSite(cs callSiteRecord, mfk mutex
 	if name == "" {
 		return
 	}
-	ctx.pass.Reportf(cs.Pos, "%s must be held when calling %s()", name, cs.Callee.Name())
+	msg := fmt.Sprintf("%s must be held when calling %s()", name, cs.Callee.Name())
+	if ctx.verbose {
+		reasons := ctx.formatRequirementReasons(cs.Callee, mfk, 3)
+		for _, line := range reasons {
+			msg += "\n" + line
+		}
+	}
+	ctx.pass.Reportf(cs.Pos, "%s", msg)
+}
+
+// formatRequirementReasons builds provenance lines explaining why fn requires mfk.
+// Returns tab-prefixed explanation lines, capped at maxChains provenance chains.
+func (ctx *passContext) formatRequirementReasons(fn *ssa.Function, mfk mutexFieldKey, maxChains int) []string {
+	facts, ok := ctx.funcFacts[fn]
+	if !ok {
+		return nil
+	}
+	origins := facts.RequiresOrigin[mfk]
+	if len(origins) == 0 {
+		return nil
+	}
+
+	var lines []string
+	chains := 0
+	for _, origin := range origins {
+		if chains >= maxChains {
+			break
+		}
+		chainLines := ctx.formatSingleOrigin(fn, mfk, origin, 0)
+		if len(chainLines) == 0 {
+			continue
+		}
+		// Separate chains with a blank line (except the first).
+		if chains > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, chainLines...)
+		chains++
+	}
+	return lines
+}
+
+// formatSingleOrigin formats one origin into explanation lines, recursing for transitive origins.
+// depth is capped to prevent runaway chains.
+func (ctx *passContext) formatSingleOrigin(fn *ssa.Function, mfk mutexFieldKey, origin requirementOrigin, depth int) []string {
+	const maxDepth = 5
+	if depth >= maxDepth {
+		return nil
+	}
+
+	if origin.ViaCallee != nil {
+		// Transitive: fn calls callee at pos.
+		pos := ctx.pass.Fset.Position(origin.ViaCallPos)
+		line := fmt.Sprintf("\t%s() calls %s() at %s:%d:%d",
+			fn.Name(), origin.ViaCallee.Name(),
+			filepath.Base(pos.Filename), pos.Line, pos.Column)
+		lines := []string{line}
+
+		// Recurse into the callee's first direct origin to show the root cause.
+		calleeFacts, ok := ctx.funcFacts[origin.ViaCallee]
+		if ok {
+			for _, inner := range calleeFacts.RequiresOrigin[mfk] {
+				innerLines := ctx.formatSingleOrigin(origin.ViaCallee, mfk, inner, depth+1)
+				if len(innerLines) > 0 {
+					lines = append(lines, innerLines...)
+					break // only show the first root cause per chain
+				}
+			}
+		}
+		return lines
+	}
+
+	if origin.AccessPos.IsValid() {
+		// Direct: fn accesses field at pos.
+		pos := ctx.pass.Fset.Position(origin.AccessPos)
+		st, ok := origin.FieldKey.StructType.Underlying().(*types.Struct)
+		if !ok || origin.FieldKey.FieldIndex >= st.NumFields() {
+			return nil
+		}
+		structName := origin.FieldKey.StructType.Obj().Name()
+		fieldName := st.Field(origin.FieldKey.FieldIndex).Name()
+		line := fmt.Sprintf("\t%s() accesses %s.%s at %s:%d:%d",
+			fn.Name(), structName, fieldName,
+			filepath.Base(pos.Filename), pos.Line, pos.Column)
+		return []string{line}
+	}
+
+	return nil
 }
 
 // reportDoubleLockAtCallSite emits a diagnostic for a call where the caller

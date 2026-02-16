@@ -38,6 +38,28 @@ config.go:14:9: Config.rw is read-locked but Unlock() was called -- use RUnlock(
 worker.go:25:2: return without unlocking Worker.mu (locked at worker.go:21:2)
 ```
 
+### Verbose mode
+
+Use `-verbose` to see *why* a function requires a particular lock. This is especially useful for interprocedural diagnostics where the lock requirement may come from a transitive callee deep in the call chain:
+
+```bash
+golintmu -verbose ./...
+```
+
+Without `-verbose`:
+```
+network.go:262:20: Network.statusMu must be held when calling populateDNSView()
+```
+
+With `-verbose`:
+```
+network.go:262:20: Network.statusMu must be held when calling populateDNSView()
+	populateDNSView() calls innerHelper() at network.go:310:3
+	innerHelper() accesses Network.dnsStatus at network.go:350:5
+```
+
+Each provenance chain shows the path from the called function to the field access that requires the lock. Multiple chains are shown when a function requires the lock for several distinct reasons (capped at 3).
+
 ## What It Detects
 
 ### Inconsistent field locking

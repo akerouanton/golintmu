@@ -108,6 +108,19 @@ func TestConstructorCalls(t *testing.T) {
 	analysistest.Run(t, testdata, singlePkgAnalyzer, "constructor_calls")
 }
 
+func TestInterproceduralVerbose(t *testing.T) {
+	testdata := analysistest.TestData()
+	if err := analyzer.Analyzer.Flags.Set("verbose", "true"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := analyzer.Analyzer.Flags.Set("verbose", "false"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	analysistest.Run(t, testdata, singlePkgAnalyzer, "interprocedural_verbose")
+}
+
 func TestCrossPackage(t *testing.T) {
 	testdata := analysistest.TestData()
 	analysistest.Run(t, testdata, analyzer.Analyzer, "crosspackage/pkga", "crosspackage/pkgb")

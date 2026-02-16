@@ -9,6 +9,12 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
+var verbose bool
+
+func init() {
+	Analyzer.Flags.BoolVar(&verbose, "verbose", false, "explain why each diagnostic was reported")
+}
+
 var Analyzer = &analysis.Analyzer{
 	Name:      "golintmu",
 	Doc:       "detects inconsistent mutex locking of struct fields",
@@ -89,6 +95,7 @@ type passContext struct {
 	observations map[fieldKey][]observation
 	guards       map[fieldKey]guardInfo
 	observedAt   map[obsKey]bool // deduplication set for observations
+	verbose      bool            // when true, append provenance explanations to interprocedural diagnostics
 
 	// Interprocedural analysis state.
 	callSites []callSiteRecord
@@ -129,6 +136,7 @@ func run(pass *analysis.Pass) (any, error) {
 		observations: make(map[fieldKey][]observation),
 		guards:       make(map[fieldKey]guardInfo),
 		observedAt:   make(map[obsKey]bool),
+		verbose:      verbose,
 		funcFacts:          make(map[*ssa.Function]*funcLockFacts),
 		lockOrderGraph:     newLockOrderGraph(),
 		lockLeakCandidates:      make(map[token.Pos][]lockLeakCandidate),

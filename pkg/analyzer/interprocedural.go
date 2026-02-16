@@ -20,6 +20,19 @@ type heldMutexRef struct {
 	Exclusive  bool
 }
 
+// requirementOrigin records why a function requires a specific lock.
+// Either a direct field access (AccessPos valid) or a transitive call (ViaCallee non-nil).
+type requirementOrigin struct {
+	// For direct requirements: the field access that triggered it.
+	FieldKey  fieldKey
+	AccessPos token.Pos
+	IsRead    bool
+
+	// For transitive requirements: the callee that propagated it.
+	ViaCallee  *ssa.Function
+	ViaCallPos token.Pos
+}
+
 // callSiteRecord records a static call from one function to another,
 // along with the normalized lock state at the call site.
 type callSiteRecord struct {
@@ -32,11 +45,12 @@ type callSiteRecord struct {
 
 // funcLockFacts tracks lock requirements and acquisitions for a function.
 type funcLockFacts struct {
-	Requires           map[mutexFieldKey]bool // locks callers must hold
-	Acquires           map[mutexFieldKey]bool // locks this function directly acquires
-	AcquiresTransitive map[mutexFieldKey]bool // direct + transitive acquisitions (via callees)
-	ReturnsHolding     map[mutexFieldKey]bool // locks held at ALL return points
-	Releases           map[mutexFieldKey]bool // locks explicitly unlocked in this function
+	Requires           map[mutexFieldKey]bool                    // locks callers must hold
+	RequiresOrigin     map[mutexFieldKey][]requirementOrigin     // why each requirement exists (verbose mode)
+	Acquires           map[mutexFieldKey]bool                    // locks this function directly acquires
+	AcquiresTransitive map[mutexFieldKey]bool                    // direct + transitive acquisitions (via callees)
+	ReturnsHolding     map[mutexFieldKey]bool                    // locks held at ALL return points
+	Releases           map[mutexFieldKey]bool                    // locks explicitly unlocked in this function
 }
 
 // getOrCreateFuncFacts returns the funcLockFacts for a function, creating it if needed.
@@ -50,6 +64,9 @@ func (ctx *passContext) getOrCreateFuncFacts(fn *ssa.Function) *funcLockFacts {
 		AcquiresTransitive: make(map[mutexFieldKey]bool),
 		ReturnsHolding:     make(map[mutexFieldKey]bool),
 		Releases:           make(map[mutexFieldKey]bool),
+	}
+	if ctx.verbose {
+		facts.RequiresOrigin = make(map[mutexFieldKey][]requirementOrigin)
 	}
 	ctx.funcFacts[fn] = facts
 	return facts
@@ -106,6 +123,14 @@ func (ctx *passContext) deriveInitialRequirements() {
 				}
 				facts := ctx.getOrCreateFuncFacts(obs.Func)
 				facts.Requires[mfk] = true
+				if ctx.verbose {
+					facts.RequiresOrigin[mfk] = append(facts.RequiresOrigin[mfk],
+						requirementOrigin{
+							FieldKey:  key,
+							AccessPos: obs.Pos,
+							IsRead:    obs.IsRead,
+						})
+				}
 			}
 		}
 	}
@@ -146,6 +171,23 @@ func (ctx *passContext) propagateRequirements() {
 					if !callerFacts.Requires[mfk] {
 						callerFacts.Requires[mfk] = true
 						changed = true
+					}
+					if ctx.verbose {
+						// Deduplicate by (ViaCallee, ViaCallPos) to avoid duplicates from fixed-point iterations.
+						origin := requirementOrigin{
+							ViaCallee:  callee,
+							ViaCallPos: cs.Pos,
+						}
+						dup := false
+						for _, existing := range callerFacts.RequiresOrigin[mfk] {
+							if existing.ViaCallee == origin.ViaCallee && existing.ViaCallPos == origin.ViaCallPos {
+								dup = true
+								break
+							}
+						}
+						if !dup {
+							callerFacts.RequiresOrigin[mfk] = append(callerFacts.RequiresOrigin[mfk], origin)
+						}
 					}
 				}
 			}
