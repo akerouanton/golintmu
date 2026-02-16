@@ -57,7 +57,7 @@ golintmu's core design (SSA-based lock state tracking + interprocedural propagat
 | [C7](catalog/C07-deferred-lock.md) | Deferred Lock instead of Unlock | Error | Future | No | `defer mu.Lock()` typo — deadlock at function exit | |
 | [C8](catalog/C08-lock-across-goroutine.md) | Lock held across goroutine spawn | Warning | Future | No | Goroutine spawned while lock is held | |
 | [C9](catalog/C09-lock-across-blocking.md) | Lock held across blocking ops | Warning | Future | No | Channel/sleep/I/O while lock is held | |
-| [C10](catalog/C10-mutex-copying.md) | Mutex copying | Error | Future | No | Mutex copied by value — breaks synchronization | |
+| [C10](catalog/C10-mutex-copying.md) | Mutex copying | Error | — | No | Mutex copied by value — breaks synchronization | Won't implement (`go vet` copylocks) |
 | [C11](catalog/C11-inconsistent-branch-locking.md) | Inconsistent branch locking | Error | Iteration 3 | No | Lock held in one branch but not the other at merge point | **Done** |
 | [C12](catalog/C12-cross-goroutine-unlock.md) | Cross-goroutine unlock | Warning | Future | Yes | Lock/unlock in different goroutines — fragile pattern | |
 | [C13](catalog/C13-return-while-locked.md) | Return while holding lock | Warning | Iteration 13 | Yes | Function returns with lock held, caller unaware | **Done** |
